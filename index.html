@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Neon Finance — Records + Dashboard</title>
+<style>
+  :root{
+    --bg:#0d0d0f;
+    --card:#15151a;
+    --muted:#aaa;
+    --accent:#00c8ff;
+    --accent-2:#00ff9d;
+    --danger:#ff4d4d;
+    --warn:#ffcc00;
+    --text:#e6e6e6;
+    --border:#1f1f25;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}
+  .container{padding:18px;padding-bottom:90px;max-width:920px;margin:0 auto}
+  h1,h2{margin:0 0 12px 0;font-weight:600}
+  .page{display:none}
+  .active{display:block}
+  .nav{position:fixed;left:0;right:0;bottom:0;height:64px;background:var(--card);display:flex;align-items:center;justify-content:space-around;border-top:1px solid #222;box-shadow:0 -6px 18px rgba(0,0,0,0.6)}
+  .nav button{background:none;border:0;color:var(--text);font-size:15px;padding:10px 14px;flex:1;cursor:pointer}
+  .nav button.active-tab{color:var(--accent);font-weight:700}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:0 6px 18px rgba(0,0,0,0.35)}
+  .dash-row{display:flex;gap:12px;flex-wrap:wrap}
+  .dash-card{flex:1;min-width:180px;text-align:center}
+  .dash-title{font-size:13px;color:var(--muted);margin-bottom:6px}
+  .dash-value{font-size:22px;font-weight:700}
+  .form-row{display:flex;gap:10px;flex-wrap:wrap}
+  input[type="text"],input[type="number"],input[type="date"],select{width:100%;padding:10px;border-radius:8px;border:1px solid #2a2a2f;background:#0f0f12;color:var(--text);box-sizing:border-box}
+  .btn{display:inline-block;padding:11px 14px;border-radius:10px;border:0;background:var(--accent);color:#071018;font-weight:700;cursor:pointer}
+  .small{font-size:12px;color:var(--muted)}
+  .activity-item{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:10px;border-left:4px solid var(--accent);background:var(--card);margin-bottom:10px}
+  .income-item{border-left-color:var(--accent-2)}
+  .expense-item{border-left-color:var(--danger)}
+  .row-between{display:flex;justify-content:space-between;align-items:center}
+  .meta{color:var(--muted);font-size:13px}
+  .controls{margin-top:8px}
+  .edit-btn,.delete-btn{border:0;padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:600}
+  .edit-btn{background:var(--warn);color:#111;margin-right:8px}
+  .delete-btn{background:var(--danger);color:#fff}
+  @media(min-width:760px){
+    .container{padding:28px}
+    .dash-value{font-size:28px}
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- RECORDS + DASHBOARD (combined) -->
+    <div id="recordsPage" class="page active">
+      <h1>Neon Finance</h1>
+
+      <!-- Dashboard summary -->
+      <div class="dash-row">
+        <div class="dash-card card">
+          <div class="dash-title">Total Income</div>
+          <div id="dashIncome" class="dash-value">RM 0</div>
+        </div>
+        <div class="dash-card card">
+          <div class="dash-title">Total Expenses</div>
+          <div id="dashExpenses" class="dash-value">RM 0</div>
+        </div>
+        <div class="dash-card card">
+          <div class="dash-title">Total Savings</div>
+          <div id="dashSavings" class="dash-value">RM 0</div>
+        </div>
+      </div>
+
+      <!-- Activity feed + export -->
+      <h2 style="margin-top:18px">Activity Feed</h2>
+
+      <button class="btn" style="margin-bottom:14px;background:#00c8ff;color:#071018"
+              onclick="exportCSV()">Export CSV</button>
+
+      <div id="activityFeed" style="margin-top:10px"></div>
+    </div>
+
+    <!-- ADD PAGE -->
+    <div id="addPage" class="page">
+      <h1>Add Record</h1>
+
+      <!-- Income form -->
+      <div class="card" style="margin-bottom:18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><strong>Add Income</strong></div>
+          <div class="small">Choose source or "Others"</div>
+        </div>
+
+        <div class="form-row" style="margin-bottom:8px">
+          <div style="flex:1;min-width:140px">
+            <label class="small">Date</label>
+            <input id="incomeDate" type="date">
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label class="small">Source</label>
+            <select id="incomeSource">
+              <option value="">Select Source</option>
+              <option>Salary</option>
+              <option>Bonus</option>
+              <option>Overtime</option>
+              <option>Investment</option>
+              <option>Dividend</option>
+              <option>Rental</option>
+              <option>Freelance</option>
+              <option>Cashback</option>
+              <option>Gift</option>
+              <option>Others</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="incomeSourceOtherWrap" style="display:none;margin-bottom:8px">
+          <label class="small">Specify source</label>
+          <input id="incomeSourceOther" type="text" placeholder="e.g., Side project">
+        </div>
+
+        <div style="margin-bottom:8px">
+          <label class="small">Amount</label>
+          <input id="incomeAmount" type="number" placeholder="0.00" step="0.01" min="0">
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="addIncome()">Add Income</button>
+          <button class="btn" style="background:#2b2b2f;color:var(--text)" onclick="clearIncomeForm()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Expense form -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><strong>Add Expense</strong></div>
+          <div class="small">Pick category or "Others"</div>
+        </div>
+
+        <div class="form-row" style="margin-bottom:8px">
+          <div style="flex:1;min-width:140px">
+            <label class="small">Date</label>
+            <input id="expenseDate" type="date">
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label class="small">Category</label>
+            <select id="expenseCategory">
+              <option value="">Select Category</option>
+              <option>Food</option>
+              <option>Groceries</option>
+              <option>Transport</option>
+              <option>Fuel</option>
+              <option>Toll</option>
+              <option>Parking</option>
+              <option>Utilities</option>
+              <option>Rent</option>
+              <option>Mortgage</option>
+              <option>Insurance</option>
+              <option>Entertainment</option>
+              <option>Shopping</option>
+              <option>Health</option>
+              <option>Education</option>
+              <option>Travel</option>
+              <option>Home</option>
+              <option>Pets</option>
+              <option>Financial</option>
+              <option>Gifts</option>
+              <option>Others</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="expenseCategoryOtherWrap" style="display:none;margin-bottom:8px">
+          <label class="small">Specify category</label>
+          <input id="expenseCategoryOther" type="text" placeholder="e.g., Charity">
+        </div>
+
+        <div style="margin-bottom:8px">
+          <label class="small">Description</label>
+          <input id="expenseDesc" type="text" placeholder="Optional note">
+        </div>
+
+        <div style="margin-bottom:8px">
+          <label class="small">Amount</label>
+          <input id="expenseAmount" type="number" placeholder="0.00" step="0.01" min="0">
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="addExpense()">Add Expense</button>
+          <button class="btn" style="background:#2b2b2f;color:var(--text)" onclick="clearExpenseForm()">Clear</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- bottom navigation -->
+  <div class="nav" role="navigation" aria-label="Main navigation">
+    <button id="tabRecords" class="active-tab" onclick="showPage('recordsPage')">Records</button>
+    <button id="tabAdd" onclick="showPage('addPage')">Add</button>
+  </div>
+
+<script>
+const LS_INCOMES = "neon_incomes_v1";
+const LS_EXPENSES = "neon_expenses_v1";
+
+let incomes = JSON.parse(localStorage.getItem(LS_INCOMES) || "[]");
+let expenses = JSON.parse(localStorage.getItem(LS_EXPENSES) || "[]");
+
+function saveAll(){
+  localStorage.setItem(LS_INCOMES, JSON.stringify(incomes));
+  localStorage.setItem(LS_EXPENSES, JSON.stringify(expenses));
+}
+
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active-tab'));
+  if(id === 'recordsPage') document.getElementById('tabRecords').classList.add('active-tab');
+  else document.getElementById('tabAdd').classList.add('active-tab');
+
+  renderActivityFeed();
+  renderDashboard();
+}
+
+/* "Others" handling */
+const incomeSourceEl = document.getElementById('incomeSource');
+const incomeSourceOtherWrap = document.getElementById('incomeSourceOtherWrap');
+const incomeSourceOther = document.getElementById('incomeSourceOther');
+
+incomeSourceEl.addEventListener('change', () => {
+  if(incomeSourceEl.value === 'Others') incomeSourceOtherWrap.style.display = 'block';
+  else { incomeSourceOtherWrap.style.display = 'none'; incomeSourceOther.value = ''; }
+});
+
+const expenseCategoryEl = document.getElementById('expenseCategory');
+const expenseCategoryOtherWrap = document.getElementById('expenseCategoryOtherWrap');
+const expenseCategoryOther = document.getElementById('expenseCategoryOther');
+
+expenseCategoryEl.addEventListener('change', () => {
+  if(expenseCategoryEl.value === 'Others') expenseCategoryOtherWrap.style.display = 'block';
+  else { expenseCategoryOtherWrap.style.display = 'none'; expenseCategoryOther.value = ''; }
+});
+
+/* Add / Clear forms */
+function addIncome(){
+  const date = document.getElementById('incomeDate').value || new Date().toISOString().slice(0,10);
+  let source = incomeSourceEl.value;
+  if(source === 'Others') source = (incomeSourceOther.value || 'Others').trim();
+  if(!source) { alert('Please select or enter an income source.'); return; }
+  const amountRaw = document.getElementById('incomeAmount').value;
+  const amount = parseFloat(amountRaw);
+  if(isNaN(amount) || amount <= 0){ alert('Enter a valid income amount.'); return; }
+
+  incomes.push({ type:'income', date, source, amount });
+  saveAll();
+  clearIncomeForm();
+  showPage('recordsPage');
+}
+
+function clearIncomeForm(){
+  document.getElementById('incomeDate').value = '';
+  incomeSourceEl.value = '';
+  incomeSourceOther.value = '';
+  incomeSourceOtherWrap.style.display = 'none';
+  document.getElementById('incomeAmount').value = '';
+}
+
+function addExpense(){
+  const date = document.getElementById('expenseDate').value || new Date().toISOString().slice(0,10);
+  let category = expenseCategoryEl.value;
+  if(category === 'Others') category = (expenseCategoryOther.value || 'Others').trim();
+  if(!category) { alert('Please select or enter an expense category.'); return; }
+  const desc = document.getElementById('expenseDesc').value || '';
+  const amountRaw = document.getElementById('expenseAmount').value;
+  const amount = parseFloat(amountRaw);
+  if(isNaN(amount) || amount <= 0){ alert('Enter a valid expense amount.'); return; }
+
+  expenses.push({ type:'expense', date, category, desc, amount });
+  saveAll();
+  clearExpenseForm();
+  showPage('recordsPage');
+}
+
+function clearExpenseForm(){
+  document.getElementById('expenseDate').value = '';
+  expenseCategoryEl.value = '';
+  expenseCategoryOther.value = '';
+  expenseCategoryOtherWrap.style.display = 'none';
+  document.getElementById('expenseDesc').value = '';
+  document.getElementById('expenseAmount').value = '';
+}
+
+/* Edit / Delete */
+function deleteRecord(type, index){
+  if(!confirm('Delete this record?')) return;
+  if(type === 'income') incomes.splice(index,1);
+  else expenses.splice(index,1);
+  saveAll();
+  renderActivityFeed();
+  renderDashboard();
+}
+
+function editRecord(type, index){
+  let item = (type === 'income') ? incomes[index] : expenses[index];
+  if(!item) return;
+
+  showPage('addPage');
+
+  if(type === 'income'){
+    document.getElementById('incomeDate').value = item.date || '';
+    const knownSources = ['Salary','Bonus','Overtime','Investment','Dividend','Rental','Freelance','Cashback','Gift'];
+    if(knownSources.includes(item.source)){
+      incomeSourceEl.value = item.source;
+      incomeSourceOtherWrap.style.display = 'none';
+      incomeSourceOther.value = '';
+    } else {
+      incomeSourceEl.value = 'Others';
+      incomeSourceOtherWrap.style.display = 'block';
+      incomeSourceOther.value = item.source;
+    }
+    document.getElementById('incomeAmount').value = item.amount;
+    incomes.splice(index,1);
+  } else {
+    document.getElementById('expenseDate').value = item.date || '';
+    const knownCats = ['Food','Groceries','Transport','Fuel','Toll','Parking','Utilities','Rent','Mortgage','Insurance','Entertainment','Shopping','Health','Education','Travel','Home','Pets','Financial','Gifts'];
+    if(knownCats.includes(item.category)){
+      expenseCategoryEl.value = item.category;
+      expenseCategoryOtherWrap.style.display = 'none';
+      expenseCategoryOther.value = '';
+    } else {
+      expenseCategoryEl.value = 'Others';
+      expenseCategoryOtherWrap.style.display = 'block';
+      expenseCategoryOther.value = item.category;
+    }
+    document.getElementById('expenseDesc').value = item.desc || '';
+    document.getElementById('expenseAmount').value = item.amount;
+    expenses.splice(index,1);
+  }
+
+  saveAll();
+  renderActivityFeed();
+  renderDashboard();
+}
+
+/* Activity feed + dashboard */
+function renderActivityFeed(){
+  const feed = document.getElementById('activityFeed');
+  feed.innerHTML = '';
+
+  const incs = incomes.map((it, idx) => ({...it, index: idx}));
+  const exps = expenses.map((it, idx) => ({...it, index: idx}));
+
+  const combined = [...incs, ...exps].sort((a,b) => {
+    const da = new Date(a.date || '1970-01-01').getTime();
+    const db = new Date(b.date || '1970-01-01').getTime();
+    return db - da;
+  });
+
+  if(combined.length === 0){
+    feed.innerHTML = '<div class="card small">No records yet. Add income or expenses from the Add tab.</div>';
+    return;
+  }
+
+  combined.forEach(item => {
+    const isIncome = item.type === 'income';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'activity-item ' + (isIncome ? 'income-item' : 'expense-item');
+
+    const top = document.createElement('div');
+    top.className = 'row-between';
+    const title = document.createElement('div');
+    title.innerHTML = `<strong>${isIncome ? escapeHtml(item.source) : escapeHtml(item.category)}</strong>`;
+    const amt = document.createElement('div');
+    amt.innerHTML = `${isIncome ? '+' : '-'} RM ${Number(item.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    top.appendChild(title);
+    top.appendChild(amt);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = item.date || '';
+
+    const desc = document.createElement('div');
+    desc.className = 'small';
+    if(!isIncome && item.desc) desc.textContent = item.desc;
+
+    const controls = document.createElement('div');
+    controls.className = 'controls';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-btn';
+    editBtn.textContent = 'Edit';
+    editBtn.onclick = () => editRecord(item.type, item.index);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-btn';
+    delBtn.textContent = 'Delete';
+    delBtn.onclick = () => deleteRecord(item.type, item.index);
+    controls.appendChild(editBtn);
+    controls.appendChild(delBtn);
+
+    wrapper.appendChild(top);
+    wrapper.appendChild(meta);
+    if(!isIncome && item.desc) wrapper.appendChild(desc);
+    wrapper.appendChild(controls);
+
+    feed.appendChild(wrapper);
+  });
+}
+
+function renderDashboard(){
+  const totalIncome = incomes.reduce((s,i)=>s + (parseFloat(i.amount)||0),0);
+  const totalExpenses = expenses.reduce((s,e)=>s + (parseFloat(e.amount)||0),0);
+  const savings = totalIncome - totalExpenses;
+
+  document.getElementById('dashIncome').textContent = 'RM ' + totalIncome.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('dashExpenses').textContent = 'RM ' + totalExpenses.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('dashSavings').textContent = 'RM ' + savings.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+/* CSV export */
+function exportCSV() {
+  let rows = [];
+  rows.push(["Type", "Date", "Category/Source", "Description", "Amount"]);
+
+  incomes.forEach(i => {
+    rows.push([
+      "Income",
+      i.date,
+      i.source,
+      "",
+      i.amount
+    ]);
+  });
+
+  expenses.forEach(e => {
+    rows.push([
+      "Expense",
+      e.date,
+      e.category,
+      e.desc || "",
+      e.amount
+    ]);
+  });
+
+  let csvContent = rows.map(r =>
+    r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+  ).join("\n");
+
+  let blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  let url = URL.createObjectURL(blob);
+
+  let link = document.createElement("a");
+  link.href = url;
+  link.download = "neon_finance_export.csv";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+/* Utils + init */
+function escapeHtml(str){
+  if(!str) return '';
+  return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+}
+
+renderActivityFeed();
+renderDashboard();
+
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'n' || e.key === 'N') showPage('addPage');
+});
+</script>
+</body>
+</html>
