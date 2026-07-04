@@ -3,95 +3,124 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Neon Finance Expense Trackers— Records + Dashboard</title>
+<title>Ledger — Finance Tracker</title>
 <style>
   :root{
-    --bg:#0d0d0f;
-    --card:#15151a;
-    --muted:#aaa;
-    --accent:#00c8ff;
-    --accent-2:#00ff9d;
-    --danger:#ff4d4d;
-    --warn:#ffcc00;
-    --text:#e6e6e6;
-    --border:#1f1f25;
+    --bg:#0b0c0e;
+    --card:#131417;
+    --card-2:#17181c;
+    --muted:#8b8d93;
+    --accent:#5eead4;
+    --accent-dim:#2a3f3b;
+    --income:#5eead4;
+    --expense:#fb7185;
+    --warn:#fbbf24;
+    --text:#eceeef;
+    --border:#232428;
+    --radius:14px;
   }
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}
-  .container{padding:18px;padding-bottom:90px;max-width:920px;margin:0 auto}
-  h1,h2{margin:0 0 12px 0;font-weight:600}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+    font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .container{padding:20px;padding-bottom:96px;max-width:900px;margin:0 auto}
+  h1{margin:0 0 4px 0;font-weight:700;font-size:24px;letter-spacing:-0.02em}
+  .subtitle{color:var(--muted);font-size:13px;margin-bottom:20px}
+  h2{margin:0 0 14px 0;font-weight:600;font-size:16px;letter-spacing:-0.01em}
   .page{display:none}
   .active{display:block}
-  .nav{position:fixed;left:0;right:0;bottom:0;height:64px;background:var(--card);display:flex;align-items:center;justify-content:space-around;border-top:1px solid #222;box-shadow:0 -6px 18px rgba(0,0,0,0.6)}
-  .nav button{background:none;border:0;color:var(--text);font-size:15px;padding:10px 14px;flex:1;cursor:pointer}
-  .nav button.active-tab{color:var(--accent);font-weight:700}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:0 6px 18px rgba(0,0,0,0.35)}
+  .nav{position:fixed;left:0;right:0;bottom:0;height:66px;background:var(--card);
+    display:flex;align-items:center;justify-content:space-around;border-top:1px solid var(--border);
+    box-shadow:0 -8px 24px rgba(0,0,0,0.5)}
+  .nav button{background:none;border:0;color:var(--muted);font-size:14px;font-weight:600;
+    padding:10px 14px;flex:1;cursor:pointer;transition:color .15s}
+  .nav button.active-tab{color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;margin-bottom:14px}
   .dash-row{display:flex;gap:12px;flex-wrap:wrap}
-  .dash-card{flex:1;min-width:180px;text-align:center}
-  .dash-title{font-size:13px;color:var(--muted);margin-bottom:6px}
-  .dash-value{font-size:22px;font-weight:700}
+  .dash-card{flex:1;min-width:150px;text-align:left}
+  .dash-title{font-size:12px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
+  .dash-value{font-size:22px;font-weight:700;letter-spacing:-0.02em}
+  .dash-value.pos{color:var(--income)}
+  .dash-value.neg{color:var(--expense)}
   .form-row{display:flex;gap:10px;flex-wrap:wrap}
-  input[type="text"],input[type="number"],input[type="date"],select{width:100%;padding:10px;border-radius:8px;border:1px solid #2a2a2f;background:#0f0f12;color:var(--text);box-sizing:border-box}
-  .btn{display:inline-block;padding:11px 14px;border-radius:10px;border:0;background:var(--accent);color:#071018;font-weight:700;cursor:pointer}
+  label.small{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+  input[type="text"],input[type="number"],input[type="date"],select{
+    width:100%;padding:11px 12px;border-radius:9px;border:1px solid var(--border);
+    background:#0e0f12;color:var(--text);font-size:14px}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .btn{display:inline-block;padding:12px 16px;border-radius:10px;border:0;
+    background:var(--accent);color:#04201b;font-weight:700;cursor:pointer;font-size:14px}
+  .btn.secondary{background:var(--card-2);color:var(--text);border:1px solid var(--border)}
+  .btn.full{width:100%}
   .small{font-size:12px;color:var(--muted)}
-  .activity-item{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:10px;border-left:4px solid var(--accent);background:var(--card);margin-bottom:10px}
-  .income-item{border-left-color:var(--accent-2)}
-  .expense-item{border-left-color:var(--danger)}
-  .row-between{display:flex;justify-content:space-between;align-items:center}
-  .meta{color:var(--muted);font-size:13px}
-  .controls{margin-top:8px}
-  .edit-btn,.delete-btn{border:0;padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:600}
-  .edit-btn{background:var(--warn);color:#111;margin-right:8px}
-  .delete-btn{background:var(--danger);color:#fff}
+  .activity-item{padding:14px;border-radius:11px;border-left:3px solid var(--accent);
+    background:var(--card);margin-bottom:10px}
+  .expense-item{border-left-color:var(--expense)}
+  .income-item{border-left-color:var(--income)}
+  .row-between{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .amt{font-weight:700;white-space:nowrap}
+  .amt.pos{color:var(--income)}
+  .amt.neg{color:var(--expense)}
+  .meta{color:var(--muted);font-size:12.5px;margin-top:3px}
+  .controls{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+  .edit-btn,.delete-btn{border:0;padding:7px 12px;border-radius:8px;cursor:pointer;
+    font-weight:600;font-size:12.5px}
+  .edit-btn{background:var(--card-2);color:var(--text);border:1px solid var(--border)}
+  .delete-btn{background:rgba(251,113,133,0.12);color:var(--expense)}
+  .pay-btn{background:rgba(94,234,212,0.14);color:var(--accent);border:1px solid var(--accent-dim)}
+  .empty{padding:30px 16px;text-align:center;color:var(--muted)}
+  .tag-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;
+    text-transform:uppercase;letter-spacing:.03em}
+  .badge-loan{background:rgba(251,113,133,0.14);color:var(--expense)}
+  .badge-utilities{background:rgba(251,191,36,0.14);color:var(--warn)}
+  .badge-others{background:rgba(139,141,147,0.16);color:var(--muted)}
+  .recurring-item{padding:14px;border-radius:11px;border:1px solid var(--border);
+    background:var(--card);margin-bottom:10px}
   @media(min-width:760px){
-    .container{padding:28px}
-    .dash-value{font-size:28px}
+    .container{padding:32px}
   }
 </style>
 </head>
 <body>
   <div class="container">
 
-    <!-- RECORDS + DASHBOARD (combined) -->
+    <!-- RECORDS + DASHBOARD -->
     <div id="recordsPage" class="page active">
-      <h1>Neon Finance Tracker</h1>
+      <h1>Ledger</h1>
+      <div class="subtitle">Your income and expenses in one place</div>
 
-      <!-- Dashboard summary -->
       <div class="dash-row">
         <div class="dash-card card">
-          <div class="dash-title">Total Income</div>
-          <div id="dashIncome" class="dash-value">RM 0</div>
+          <div class="dash-title">Income</div>
+          <div id="dashIncome" class="dash-value pos">RM 0.00</div>
         </div>
         <div class="dash-card card">
-          <div class="dash-title">Total Expenses</div>
-          <div id="dashExpenses" class="dash-value">RM 0</div>
+          <div class="dash-title">Expenses</div>
+          <div id="dashExpenses" class="dash-value neg">RM 0.00</div>
         </div>
         <div class="dash-card card">
-          <div class="dash-title">Total Savings</div>
-          <div id="dashSavings" class="dash-value">RM 0</div>
+          <div class="dash-title">Net Savings</div>
+          <div id="dashSavings" class="dash-value">RM 0.00</div>
         </div>
       </div>
 
-      <!-- Activity feed + export -->
-      <h2 style="margin-top:18px">Activity Feed</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:14px">
+        <h2 style="margin:0">Activity</h2>
+        <button class="btn secondary" onclick="exportCSV()">Export CSV</button>
+      </div>
 
-      <button class="btn" style="margin-bottom:14px;background:#00c8ff;color:#071018"
-              onclick="exportCSV()">Export CSV</button>
-
-      <div id="activityFeed" style="margin-top:10px"></div>
+      <div id="activityFeed"></div>
     </div>
 
     <!-- ADD PAGE -->
     <div id="addPage" class="page">
       <h1>Add Record</h1>
+      <div class="subtitle">Log income or an expense</div>
 
-      <!-- Income form -->
       <div class="card" style="margin-bottom:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div><strong>Add Income</strong></div>
-          <div class="small">Choose source or "Others"</div>
-        </div>
-
-        <div class="form-row" style="margin-bottom:8px">
+        <h2>Income</h2>
+        <div class="form-row" style="margin-bottom:10px">
           <div style="flex:1;min-width:140px">
             <label class="small">Date</label>
             <input id="incomeDate" type="date">
@@ -99,7 +128,7 @@
           <div style="flex:1;min-width:160px">
             <label class="small">Source</label>
             <select id="incomeSource">
-              <option value="">Select Source</option>
+              <option value="">Select source</option>
               <option>Salary</option>
               <option>Bonus</option>
               <option>Overtime</option>
@@ -113,31 +142,23 @@
             </select>
           </div>
         </div>
-
-        <div id="incomeSourceOtherWrap" style="display:none;margin-bottom:8px">
+        <div id="incomeSourceOtherWrap" style="display:none;margin-bottom:10px">
           <label class="small">Specify source</label>
           <input id="incomeSourceOther" type="text" placeholder="e.g., Side project">
         </div>
-
-        <div style="margin-bottom:8px">
-          <label class="small">Amount</label>
+        <div style="margin-bottom:12px">
+          <label class="small">Amount (RM)</label>
           <input id="incomeAmount" type="number" placeholder="0.00" step="0.01" min="0">
         </div>
-
         <div style="display:flex;gap:8px">
-          <button class="btn" onclick="addIncome()">Add Income</button>
-          <button class="btn" style="background:#2b2b2f;color:var(--text)" onclick="clearIncomeForm()">Clear</button>
+          <button class="btn" onclick="addIncome()">Add income</button>
+          <button class="btn secondary" onclick="clearIncomeForm()">Clear</button>
         </div>
       </div>
 
-      <!-- Expense form -->
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div><strong>Add Expense</strong></div>
-          <div class="small">Pick category or "Others"</div>
-        </div>
-
-        <div class="form-row" style="margin-bottom:8px">
+        <h2>Expense</h2>
+        <div class="form-row" style="margin-bottom:10px">
           <div style="flex:1;min-width:140px">
             <label class="small">Date</label>
             <input id="expenseDate" type="date">
@@ -145,10 +166,12 @@
           <div style="flex:1;min-width:160px">
             <label class="small">Category</label>
             <select id="expenseCategory">
-              <option value="">Select Category</option>
+              <option value="">Select category</option>
               <option>Food</option>
               <option>Groceries</option>
+              <option>Food Delivery</option>
               <option>Transport</option>
+              <option>Ride-hailing</option>
               <option>Fuel</option>
               <option>Toll</option>
               <option>Parking</option>
@@ -169,47 +192,107 @@
             </select>
           </div>
         </div>
-
-        <div id="expenseCategoryOtherWrap" style="display:none;margin-bottom:8px">
+        <div id="expenseCategoryOtherWrap" style="display:none;margin-bottom:10px">
           <label class="small">Specify category</label>
           <input id="expenseCategoryOther" type="text" placeholder="e.g., Charity">
         </div>
-
-        <div style="margin-bottom:8px">
+        <div style="margin-bottom:10px">
           <label class="small">Description</label>
           <input id="expenseDesc" type="text" placeholder="Optional note">
         </div>
-
-        <div style="margin-bottom:8px">
-          <label class="small">Amount</label>
+        <div style="margin-bottom:12px">
+          <label class="small">Amount (RM)</label>
           <input id="expenseAmount" type="number" placeholder="0.00" step="0.01" min="0">
         </div>
-
         <div style="display:flex;gap:8px">
-          <button class="btn" onclick="addExpense()">Add Expense</button>
-          <button class="btn" style="background:#2b2b2f;color:var(--text)" onclick="clearExpenseForm()">Clear</button>
+          <button class="btn" onclick="addExpense()">Add expense</button>
+          <button class="btn secondary" onclick="clearExpenseForm()">Clear</button>
         </div>
       </div>
     </div>
 
+    <!-- RECURRING PAGE -->
+    <div id="recurringPage" class="page">
+      <h1>Recurring</h1>
+      <div class="subtitle">Loans, utilities, and other bills you track long-term</div>
+
+      <div class="card">
+        <h2 id="recurringFormTitle">Add recurring transaction</h2>
+
+        <div class="form-row" style="margin-bottom:10px">
+          <div style="flex:1;min-width:140px">
+            <label class="small">Type</label>
+            <select id="recurringType">
+              <option value="Loan">Loan</option>
+              <option value="Utilities">Utilities</option>
+              <option value="Others">Others</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label class="small">Amount (RM)</label>
+            <input id="recurringAmount" type="number" placeholder="0.00" step="0.01" min="0">
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <label class="small">Name</label>
+          <input id="recurringName" type="text" placeholder="e.g., Car loan, TNB bill, Netflix">
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="recurringSubmitBtn" onclick="saveRecurring()">Add recurring</button>
+          <button class="btn secondary" onclick="clearRecurringForm()">Clear</button>
+        </div>
+      </div>
+
+      <h2 style="margin-top:20px">Tracked</h2>
+      <div id="recurringList"></div>
+    </div>
+
   </div>
 
-  <!-- bottom navigation -->
   <div class="nav" role="navigation" aria-label="Main navigation">
     <button id="tabRecords" class="active-tab" onclick="showPage('recordsPage')">Records</button>
     <button id="tabAdd" onclick="showPage('addPage')">Add</button>
+    <button id="tabRecurring" onclick="showPage('recurringPage')">Recurring</button>
   </div>
 
 <script>
-const LS_INCOMES = "neon_incomes_v1";
-const LS_EXPENSES = "neon_expenses_v1";
+let incomes = [];
+let expenses = [];
+let recurring = []; // { id, type, name, amount }
+let editingRecurringId = null;
 
-let incomes = JSON.parse(localStorage.getItem(LS_INCOMES) || "[]");
-let expenses = JSON.parse(localStorage.getItem(LS_EXPENSES) || "[]");
+async function loadAll(){
+  try{
+    const inc = await window.storage.get('incomes');
+    incomes = inc ? JSON.parse(inc.value) : [];
+  }catch(e){ incomes = []; }
+  try{
+    const exp = await window.storage.get('expenses');
+    expenses = exp ? JSON.parse(exp.value) : [];
+  }catch(e){ expenses = []; }
+  try{
+    const r = await window.storage.get('recurring');
+    recurring = r ? JSON.parse(r.value) : [];
+  }catch(e){ recurring = []; }
 
-function saveAll(){
-  localStorage.setItem(LS_INCOMES, JSON.stringify(incomes));
-  localStorage.setItem(LS_EXPENSES, JSON.stringify(expenses));
+  renderActivityFeed();
+  renderDashboard();
+  renderRecurringList();
+}
+
+async function saveIncomes(){
+  try{ await window.storage.set('incomes', JSON.stringify(incomes)); }
+  catch(e){ console.error('Failed to save incomes', e); }
+}
+async function saveExpenses(){
+  try{ await window.storage.set('expenses', JSON.stringify(expenses)); }
+  catch(e){ console.error('Failed to save expenses', e); }
+}
+async function saveRecurringList(){
+  try{ await window.storage.set('recurring', JSON.stringify(recurring)); }
+  catch(e){ console.error('Failed to save recurring', e); }
 }
 
 function showPage(id){
@@ -218,10 +301,12 @@ function showPage(id){
 
   document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active-tab'));
   if(id === 'recordsPage') document.getElementById('tabRecords').classList.add('active-tab');
-  else document.getElementById('tabAdd').classList.add('active-tab');
+  else if(id === 'addPage') document.getElementById('tabAdd').classList.add('active-tab');
+  else document.getElementById('tabRecurring').classList.add('active-tab');
 
   renderActivityFeed();
   renderDashboard();
+  renderRecurringList();
 }
 
 /* "Others" handling */
@@ -244,17 +329,16 @@ expenseCategoryEl.addEventListener('change', () => {
 });
 
 /* Add / Clear forms */
-function addIncome(){
+async function addIncome(){
   const date = document.getElementById('incomeDate').value || new Date().toISOString().slice(0,10);
   let source = incomeSourceEl.value;
   if(source === 'Others') source = (incomeSourceOther.value || 'Others').trim();
-  if(!source) { alert('Please select or enter an income source.'); return; }
-  const amountRaw = document.getElementById('incomeAmount').value;
-  const amount = parseFloat(amountRaw);
+  if(!source){ alert('Please select or enter an income source.'); return; }
+  const amount = parseFloat(document.getElementById('incomeAmount').value);
   if(isNaN(amount) || amount <= 0){ alert('Enter a valid income amount.'); return; }
 
   incomes.push({ type:'income', date, source, amount });
-  saveAll();
+  await saveIncomes();
   clearIncomeForm();
   showPage('recordsPage');
 }
@@ -267,18 +351,17 @@ function clearIncomeForm(){
   document.getElementById('incomeAmount').value = '';
 }
 
-function addExpense(){
+async function addExpense(){
   const date = document.getElementById('expenseDate').value || new Date().toISOString().slice(0,10);
   let category = expenseCategoryEl.value;
   if(category === 'Others') category = (expenseCategoryOther.value || 'Others').trim();
-  if(!category) { alert('Please select or enter an expense category.'); return; }
+  if(!category){ alert('Please select or enter an expense category.'); return; }
   const desc = document.getElementById('expenseDesc').value || '';
-  const amountRaw = document.getElementById('expenseAmount').value;
-  const amount = parseFloat(amountRaw);
+  const amount = parseFloat(document.getElementById('expenseAmount').value);
   if(isNaN(amount) || amount <= 0){ alert('Enter a valid expense amount.'); return; }
 
   expenses.push({ type:'expense', date, category, desc, amount });
-  saveAll();
+  await saveExpenses();
   clearExpenseForm();
   showPage('recordsPage');
 }
@@ -292,17 +375,16 @@ function clearExpenseForm(){
   document.getElementById('expenseAmount').value = '';
 }
 
-/* Edit / Delete */
-function deleteRecord(type, index){
+/* Edit / Delete (income & expense records) */
+async function deleteRecord(type, index){
   if(!confirm('Delete this record?')) return;
-  if(type === 'income') incomes.splice(index,1);
-  else expenses.splice(index,1);
-  saveAll();
+  if(type === 'income'){ incomes.splice(index,1); await saveIncomes(); }
+  else { expenses.splice(index,1); await saveExpenses(); }
   renderActivityFeed();
   renderDashboard();
 }
 
-function editRecord(type, index){
+async function editRecord(type, index){
   let item = (type === 'income') ? incomes[index] : expenses[index];
   if(!item) return;
 
@@ -322,9 +404,10 @@ function editRecord(type, index){
     }
     document.getElementById('incomeAmount').value = item.amount;
     incomes.splice(index,1);
+    await saveIncomes();
   } else {
     document.getElementById('expenseDate').value = item.date || '';
-    const knownCats = ['Food','Groceries','Transport','Fuel','Toll','Parking','Utilities','Rent','Mortgage','Insurance','Entertainment','Shopping','Health','Education','Travel','Home','Pets','Financial','Gifts'];
+    const knownCats = ['Food','Groceries','Food Delivery','Transport','Ride-hailing','Fuel','Toll','Parking','Utilities','Rent','Mortgage','Insurance','Entertainment','Shopping','Health','Education','Travel','Home','Pets','Financial','Gifts'];
     if(knownCats.includes(item.category)){
       expenseCategoryEl.value = item.category;
       expenseCategoryOtherWrap.style.display = 'none';
@@ -337,11 +420,137 @@ function editRecord(type, index){
     document.getElementById('expenseDesc').value = item.desc || '';
     document.getElementById('expenseAmount').value = item.amount;
     expenses.splice(index,1);
+    await saveExpenses();
   }
 
-  saveAll();
   renderActivityFeed();
   renderDashboard();
+}
+
+/* ---------- Recurring transactions ---------- */
+
+function categoryForRecurringType(type){
+  if(type === 'Loan') return 'Financial';
+  if(type === 'Utilities') return 'Utilities';
+  return 'Others';
+}
+
+function badgeClassForType(type){
+  if(type === 'Loan') return 'badge-loan';
+  if(type === 'Utilities') return 'badge-utilities';
+  return 'badge-others';
+}
+
+function todayStr(){
+  return new Date().toISOString().slice(0,10);
+}
+
+async function saveRecurring(){
+  const type = document.getElementById('recurringType').value;
+  const name = document.getElementById('recurringName').value.trim();
+  const amount = parseFloat(document.getElementById('recurringAmount').value);
+
+  if(!name){ alert('Please enter a name for this recurring transaction.'); return; }
+  if(isNaN(amount) || amount <= 0){ alert('Enter a valid amount.'); return; }
+
+  if(editingRecurringId){
+    const item = recurring.find(r => r.id === editingRecurringId);
+    if(item){
+      item.type = type;
+      item.name = name;
+      item.amount = amount;
+    }
+    editingRecurringId = null;
+  } else {
+    recurring.push({
+      id: 'r_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+      type, name, amount
+    });
+  }
+
+  await saveRecurringList();
+  clearRecurringForm();
+  renderRecurringList();
+}
+
+function clearRecurringForm(){
+  document.getElementById('recurringType').value = 'Loan';
+  document.getElementById('recurringName').value = '';
+  document.getElementById('recurringAmount').value = '';
+  editingRecurringId = null;
+  document.getElementById('recurringFormTitle').textContent = 'Add recurring transaction';
+  document.getElementById('recurringSubmitBtn').textContent = 'Add recurring';
+}
+
+function editRecurring(id){
+  const item = recurring.find(r => r.id === id);
+  if(!item) return;
+  editingRecurringId = id;
+  document.getElementById('recurringType').value = item.type;
+  document.getElementById('recurringName').value = item.name;
+  document.getElementById('recurringAmount').value = item.amount;
+  document.getElementById('recurringFormTitle').textContent = 'Edit recurring transaction';
+  document.getElementById('recurringSubmitBtn').textContent = 'Save changes';
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+async function deleteRecurring(id){
+  if(!confirm('Remove this recurring transaction? This cannot be undone.')) return;
+  recurring = recurring.filter(r => r.id !== id);
+  await saveRecurringList();
+  renderRecurringList();
+}
+
+async function logRecurringPayment(id){
+  const item = recurring.find(r => r.id === id);
+  if(!item) return;
+
+  const category = categoryForRecurringType(item.type);
+  expenses.push({
+    type: 'expense',
+    date: todayStr(),
+    category,
+    desc: item.name + ' (recurring)',
+    amount: item.amount
+  });
+  await saveExpenses();
+
+  renderActivityFeed();
+  renderDashboard();
+
+  alert(`Logged RM ${item.amount.toFixed(2)} for "${item.name}" today.`);
+}
+
+function renderRecurringList(){
+  const container = document.getElementById('recurringList');
+  if(recurring.length === 0){
+    container.innerHTML = '<div class="card empty">No recurring transactions yet. Add a loan, utility bill, or other repeating payment above.</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  recurring.forEach(item => {
+    const wrap = document.createElement('div');
+    wrap.className = 'recurring-item';
+    wrap.innerHTML = `
+      <div class="row-between">
+        <div>
+          <span class="badge ${badgeClassForType(item.type)}">${escapeHtml(item.type)}</span>
+          <div style="margin-top:8px"><strong>${escapeHtml(item.name)}</strong></div>
+        </div>
+        <div class="amt neg">RM ${Number(item.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+      </div>
+      <div class="controls">
+        <button class="edit-btn pay-btn" data-action="pay">Log payment</button>
+        <button class="edit-btn" data-action="edit">Edit</button>
+        <button class="delete-btn" data-action="delete">Remove</button>
+      </div>
+    `;
+    wrap.querySelector('[data-action="pay"]').onclick = () => logRecurringPayment(item.id);
+    wrap.querySelector('[data-action="edit"]').onclick = () => editRecurring(item.id);
+    wrap.querySelector('[data-action="delete"]').onclick = () => deleteRecurring(item.id);
+    container.appendChild(wrap);
+  });
 }
 
 /* Activity feed + dashboard */
@@ -359,7 +568,7 @@ function renderActivityFeed(){
   });
 
   if(combined.length === 0){
-    feed.innerHTML = '<div class="card small">No records yet. Add income or expenses from the Add tab.</div>';
+    feed.innerHTML = '<div class="card empty">No records yet. Add income or expenses from the Add tab.</div>';
     return;
   }
 
@@ -373,7 +582,8 @@ function renderActivityFeed(){
     const title = document.createElement('div');
     title.innerHTML = `<strong>${isIncome ? escapeHtml(item.source) : escapeHtml(item.category)}</strong>`;
     const amt = document.createElement('div');
-    amt.innerHTML = `${isIncome ? '+' : '-'} RM ${Number(item.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    amt.className = 'amt ' + (isIncome ? 'pos' : 'neg');
+    amt.textContent = `${isIncome ? '+' : '-'} RM ${Number(item.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
     top.appendChild(title);
     top.appendChild(amt);
 
@@ -383,6 +593,7 @@ function renderActivityFeed(){
 
     const desc = document.createElement('div');
     desc.className = 'small';
+    desc.style.marginTop = '4px';
     if(!isIncome && item.desc) desc.textContent = item.desc;
 
     const controls = document.createElement('div');
@@ -414,33 +625,22 @@ function renderDashboard(){
 
   document.getElementById('dashIncome').textContent = 'RM ' + totalIncome.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('dashExpenses').textContent = 'RM ' + totalExpenses.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-  document.getElementById('dashSavings').textContent = 'RM ' + savings.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  const savingsEl = document.getElementById('dashSavings');
+  savingsEl.textContent = 'RM ' + savings.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  savingsEl.className = 'dash-value ' + (savings >= 0 ? 'pos' : 'neg');
 }
 
 /* CSV export */
 function exportCSV() {
-  let rows = [];
-  rows.push(["Type", "Date", "Category/Source", "Description", "Amount"]);
+  if(incomes.length === 0 && expenses.length === 0){
+    alert('No records to export yet.');
+    return;
+  }
+  let rows = [["Type", "Date", "Category/Source", "Description", "Amount"]];
 
-  incomes.forEach(i => {
-    rows.push([
-      "Income",
-      i.date,
-      i.source,
-      "",
-      i.amount
-    ]);
-  });
-
-  expenses.forEach(e => {
-    rows.push([
-      "Expense",
-      e.date,
-      e.category,
-      e.desc || "",
-      e.amount
-    ]);
-  });
+  incomes.forEach(i => rows.push(["Income", i.date, i.source, "", i.amount]));
+  expenses.forEach(e => rows.push(["Expense", e.date, e.category, e.desc || "", e.amount]));
 
   let csvContent = rows.map(r =>
     r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
@@ -448,12 +648,10 @@ function exportCSV() {
 
   let blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   let url = URL.createObjectURL(blob);
-
   let link = document.createElement("a");
   link.href = url;
-  link.download = "neon_finance_export.csv";
+  link.download = "ledger_export.csv";
   link.click();
-
   URL.revokeObjectURL(url);
 }
 
@@ -463,8 +661,7 @@ function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 }
 
-renderActivityFeed();
-renderDashboard();
+loadAll();
 
 document.addEventListener('keydown', (e) => {
   if(e.key === 'n' || e.key === 'N') showPage('addPage');
