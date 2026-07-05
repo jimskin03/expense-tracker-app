@@ -77,6 +77,7 @@
   .badge-others{background:rgba(139,141,147,0.16);color:var(--muted)}
   .recurring-item{padding:14px;border-radius:11px;border:1px solid var(--border);
     background:var(--card);margin-bottom:10px}
+  .recurring-total{text-align:right;font-weight:700;font-size:16px;margin-bottom:10px;color:var(--muted)}
   @media(min-width:760px){
     .container{padding:32px}
   }
@@ -246,6 +247,8 @@
       </div>
 
       <h2 style="margin-top:20px">Tracked</h2>
+      <!-- Total display for recurring amounts -->
+      <div id="recurring-total" class="recurring-total">Total: RM 0.00</div>
       <div id="recurringList"></div>
     </div>
 
@@ -523,6 +526,14 @@ async function logRecurringPayment(id){
 
 function renderRecurringList(){
   const container = document.getElementById('recurringList');
+  const totalEl = document.getElementById('recurring-total');
+
+  // compute total
+  const total = recurring.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  if(totalEl) {
+    totalEl.textContent = 'Total: RM ' + total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+
   if(recurring.length === 0){
     container.innerHTML = '<div class="card empty">No recurring transactions yet. Add a loan, utility bill, or other repeating payment above.</div>';
     return;
