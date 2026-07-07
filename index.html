@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Ledger — Finance Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 <style>
   :root{
     --bg:#0b0c0e;
@@ -78,8 +79,38 @@
   .recurring-item{padding:14px;border-radius:11px;border:1px solid var(--border);
     background:var(--card);margin-bottom:10px}
   .recurring-total{text-align:right;font-weight:700;font-size:16px;margin-bottom:10px;color:var(--muted)}
+  
+  /* Chart & Filter Styles */
+  .chart-container{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;margin-bottom:14px}
+  .chart-title{font-size:16px;font-weight:600;margin-bottom:14px}
+  .chart-wrapper{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:center}
+  .chart-canvas{position:relative;height:250px}
+  .chart-legend{display:flex;flex-direction:column;gap:8px}
+  .legend-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;
+    background:var(--card-2);font-size:13px}
+  .legend-color{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+  .legend-label{flex:1}
+  .legend-value{font-weight:600;color:var(--muted)}
+  
+  .filter-controls{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .filter-btn{padding:7px 14px;background:var(--card-2);border:1px solid var(--border);
+    color:var(--muted);border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;
+    transition:all .2s}
+  .filter-btn:hover{border-color:var(--accent);color:var(--text)}
+  .filter-btn.active{background:var(--accent);border-color:var(--accent);color:#04201b}
+  
+  .custom-date-inputs{display:none;gap:8px;margin-bottom:14px;padding:10px;
+    background:var(--card-2);border-radius:9px;animation:slideDown .3s ease}
+  .custom-date-inputs.active{display:flex}
+  @keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+  
   @media(min-width:760px){
     .container{padding:32px}
+    .chart-wrapper{grid-template-columns:1fr 1fr}
+  }
+  @media(max-width:600px){
+    .chart-wrapper{grid-template-columns:1fr}
   }
 </style>
 </head>
@@ -106,9 +137,34 @@
         </div>
       </div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:14px">
+      <!-- Chart Section -->
+      <div class="chart-container" id="chartSection" style="display:none">
+        <h2 class="chart-title">Expenses by Category</h2>
+        <div class="chart-wrapper">
+          <div class="chart-canvas">
+            <canvas id="expenseChart"></canvas>
+          </div>
+          <div class="chart-legend" id="chartLegend"></div>
+        </div>
+      </div>
+
+      <!-- Filter Controls -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;margin-bottom:14px;flex-wrap:wrap;gap:10px">
         <h2 style="margin:0">Activity</h2>
         <button class="btn secondary" onclick="exportCSV()">Export CSV</button>
+      </div>
+
+      <div class="filter-controls" id="filterControls">
+        <button class="filter-btn active" data-filter="all-time">All Time</button>
+        <button class="filter-btn" data-filter="this-month">This Month</button>
+        <button class="filter-btn" data-filter="last-7">Last 7 Days</button>
+        <button class="filter-btn" data-filter="last-30">Last 30 Days</button>
+        <button class="filter-btn" data-filter="custom">Custom</button>
+      </div>
+
+      <div class="custom-date-inputs" id="customDateRange">
+        <input type="date" id="customStartDate" style="flex:1" placeholder="Start date">
+        <input type="date" id="customEndDate" style="flex:1" placeholder="End date">
       </div>
 
       <div id="activityFeed"></div>
@@ -247,7 +303,6 @@
       </div>
 
       <h2 style="margin-top:20px">Tracked</h2>
-      <!-- Total display for recurring amounts -->
       <div id="recurring-total" class="recurring-total">Total: RM 0.00</div>
       <div id="recurringList"></div>
     </div>
@@ -263,8 +318,15 @@
 <script>
 let incomes = [];
 let expenses = [];
-let recurring = []; // { id, type, name, amount }
+let recurring = [];
 let editingRecurringId = null;
+let chart = null;
+let activeFilter = 'all-time';
+
+const colorPalette = [
+  '#5eead4', '#fb7185', '#fbbf24', '#a78bfa', '#34d399',
+  '#60a5fa', '#f472b6', '#fdba74', '#818cf8', '#4ade80'
+];
 
 async function loadAll(){
   try{
@@ -283,6 +345,8 @@ async function loadAll(){
   renderActivityFeed();
   renderDashboard();
   renderRecurringList();
+  renderChart();
+  setupFilterListeners();
 }
 
 async function saveIncomes(){
@@ -310,9 +374,9 @@ function showPage(id){
   renderActivityFeed();
   renderDashboard();
   renderRecurringList();
+  renderChart();
 }
 
-/* "Others" handling */
 const incomeSourceEl = document.getElementById('incomeSource');
 const incomeSourceOtherWrap = document.getElementById('incomeSourceOtherWrap');
 const incomeSourceOther = document.getElementById('incomeSourceOther');
@@ -331,7 +395,6 @@ expenseCategoryEl.addEventListener('change', () => {
   else { expenseCategoryOtherWrap.style.display = 'none'; expenseCategoryOther.value = ''; }
 });
 
-/* Add / Clear forms */
 async function addIncome(){
   const date = document.getElementById('incomeDate').value || new Date().toISOString().slice(0,10);
   let source = incomeSourceEl.value;
@@ -378,13 +441,13 @@ function clearExpenseForm(){
   document.getElementById('expenseAmount').value = '';
 }
 
-/* Edit / Delete (income & expense records) */
 async function deleteRecord(type, index){
   if(!confirm('Delete this record?')) return;
   if(type === 'income'){ incomes.splice(index,1); await saveIncomes(); }
   else { expenses.splice(index,1); await saveExpenses(); }
   renderActivityFeed();
   renderDashboard();
+  renderChart();
 }
 
 async function editRecord(type, index){
@@ -428,9 +491,8 @@ async function editRecord(type, index){
 
   renderActivityFeed();
   renderDashboard();
+  renderChart();
 }
-
-/* ---------- Recurring transactions ---------- */
 
 function categoryForRecurringType(type){
   if(type === 'Loan') return 'Financial';
@@ -520,6 +582,7 @@ async function logRecurringPayment(id){
 
   renderActivityFeed();
   renderDashboard();
+  renderChart();
 
   alert(`Logged RM ${item.amount.toFixed(2)} for "${item.name}" today.`);
 }
@@ -528,7 +591,6 @@ function renderRecurringList(){
   const container = document.getElementById('recurringList');
   const totalEl = document.getElementById('recurring-total');
 
-  // compute total
   const total = recurring.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
   if(totalEl) {
     totalEl.textContent = 'Total: RM ' + total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -564,13 +626,144 @@ function renderRecurringList(){
   });
 }
 
-/* Activity feed + dashboard */
+function setupFilterListeners(){
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      
+      if(activeFilter === 'custom'){
+        document.getElementById('customDateRange').classList.add('active');
+      } else {
+        document.getElementById('customDateRange').classList.remove('active');
+      }
+      
+      renderActivityFeed();
+      renderChart();
+    });
+  });
+
+  document.getElementById('customStartDate').addEventListener('change', () => {
+    renderActivityFeed();
+    renderChart();
+  });
+  document.getElementById('customEndDate').addEventListener('change', () => {
+    renderActivityFeed();
+    renderChart();
+  });
+}
+
+function getFilteredExpenses(){
+  const now = new Date();
+  let filtered = expenses;
+
+  if(activeFilter === 'this-month'){
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    filtered = expenses.filter(e => {
+      const eDate = new Date(e.date);
+      return eDate.getMonth() === currentMonth && eDate.getFullYear() === currentYear;
+    });
+  } else if(activeFilter === 'last-7'){
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    filtered = expenses.filter(e => new Date(e.date) >= sevenDaysAgo);
+  } else if(activeFilter === 'last-30'){
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    filtered = expenses.filter(e => new Date(e.date) >= thirtyDaysAgo);
+  } else if(activeFilter === 'custom'){
+    const startDate = document.getElementById('customStartDate').value;
+    const endDate = document.getElementById('customEndDate').value;
+    
+    if(startDate){
+      const start = new Date(startDate);
+      filtered = filtered.filter(e => new Date(e.date) >= start);
+    }
+    if(endDate){
+      const end = new Date(endDate);
+      end.setDate(end.getDate() + 1);
+      filtered = filtered.filter(e => new Date(e.date) < end);
+    }
+  }
+
+  return filtered;
+}
+
+function groupByCategory(){
+  const filtered = getFilteredExpenses();
+  const grouped = {};
+  filtered.forEach(e => {
+    grouped[e.category] = (grouped[e.category] || 0) + e.amount;
+  });
+  return grouped;
+}
+
+function renderChart(){
+  const chartSection = document.getElementById('chartSection');
+  const grouped = groupByCategory();
+  const categories = Object.keys(grouped);
+
+  if(categories.length === 0){
+    chartSection.style.display = 'none';
+    return;
+  }
+
+  chartSection.style.display = 'block';
+  const amounts = Object.values(grouped);
+  const colors = categories.map((cat, i) => colorPalette[i % colorPalette.length]);
+
+  const ctx = document.getElementById('expenseChart').getContext('2d');
+  
+  if(chart){
+    chart.destroy();
+  }
+
+  chart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: categories,
+      datasets: [{
+        data: amounts,
+        backgroundColor: colors,
+        borderColor: '#131417',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false }
+      }
+    }
+  });
+
+  const legendHtml = categories
+    .map((cat, i) => {
+      const amount = grouped[cat];
+      const percentage = ((amount / amounts.reduce((a, b) => a + b, 0)) * 100).toFixed(1);
+      return `
+        <div class="legend-item">
+          <div class="legend-color" style="background-color: ${colors[i]}"></div>
+          <span class="legend-label">${cat}</span>
+          <span class="legend-value">RM ${Number(amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} (${percentage}%)</span>
+        </div>
+      `;
+    })
+    .join('');
+  
+  document.getElementById('chartLegend').innerHTML = legendHtml;
+}
+
 function renderActivityFeed(){
   const feed = document.getElementById('activityFeed');
   feed.innerHTML = '';
 
   const incs = incomes.map((it, idx) => ({...it, index: idx}));
-  const exps = expenses.map((it, idx) => ({...it, index: idx}));
+  const exps = getFilteredExpenses().map((it, idx) => {
+    const origIdx = expenses.indexOf(it);
+    return {...it, index: origIdx};
+  });
 
   const combined = [...incs, ...exps].sort((a,b) => {
     const da = new Date(a.date || '1970-01-01').getTime();
@@ -642,7 +835,6 @@ function renderDashboard(){
   savingsEl.className = 'dash-value ' + (savings >= 0 ? 'pos' : 'neg');
 }
 
-/* CSV export */
 function exportCSV() {
   if(incomes.length === 0 && expenses.length === 0){
     alert('No records to export yet.');
@@ -666,7 +858,6 @@ function exportCSV() {
   URL.revokeObjectURL(url);
 }
 
-/* Utils + init */
 function escapeHtml(str){
   if(!str) return '';
   return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
