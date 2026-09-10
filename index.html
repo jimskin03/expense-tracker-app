@@ -114,11 +114,6 @@
   .calc-stat-value.mint{color:var(--income)} .calc-stat-value.gold{color:var(--warn)}
   .calc-chart{height:280px;position:relative}
   .calc-note{font-size:12px;line-height:1.55;color:var(--muted);margin-top:14px}
-  .auth-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
-  .auth-copy{min-width:0}.auth-title{font-weight:700;font-size:14px}.auth-status{font-size:12px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
-  .auth-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.auth-actions input{width:220px}
-  .auth-message{font-size:12px;color:var(--accent);margin-top:8px}.auth-message.error{color:var(--expense)}
-  @media(max-width:600px){.auth-card{align-items:stretch;flex-direction:column}.auth-actions{flex-direction:column;align-items:stretch}.auth-actions input{width:100%}}
   @media(max-width:650px){.calc-grid,.calc-stats{grid-template-columns:1fr}}
   
   @media(min-width:760px){
@@ -132,18 +127,6 @@
 </head>
 <body>
   <div class="container">
-    <section class="card auth-card" aria-labelledby="authTitle">
-      <div class="auth-copy">
-        <div id="authTitle" class="auth-title">Cryptgreg Research account</div>
-        <div id="authStatus" class="auth-status">Sign in to keep this workspace separate and protected.</div>
-        <div id="authMessage" class="auth-message" role="status" aria-live="polite"></div>
-      </div>
-      <div class="auth-actions">
-        <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" aria-label="Email address">
-        <button id="authSignIn" class="btn" type="button">Send magic link</button>
-        <button id="authSignOut" class="btn secondary" type="button" hidden>Sign out</button>
-      </div>
-    </section>
 
     <!-- RECORDS + DASHBOARD -->
     <div id="recordsPage" class="page active">
@@ -413,47 +396,7 @@ let currentUser = null;
 function storageKey(name){
   return `ledger:${currentUser ? currentUser.id : 'public'}:${name}`;
 }
-function setAuthMessage(message, isError = false){
-  const el = document.getElementById('authMessage');
-  el.textContent = message;
-  el.classList.toggle('error', isError);
-}
-function renderAuth(user){
-  currentUser = user;
-  const status = document.getElementById('authStatus');
-  const signIn = document.getElementById('authSignIn');
-  const signOut = document.getElementById('authSignOut');
-  const email = document.getElementById('authEmail');
-  if(user){
-    status.textContent = `Signed in as ${user.email || 'Cryptgreg Research user'}. Data is scoped to this account on this device.`;
-    signIn.hidden = true;
-    signOut.hidden = false;
-    email.hidden = true;
-  } else {
-    status.textContent = 'Sign in to keep this workspace separate and protected.';
-    signIn.hidden = false;
-    signOut.hidden = true;
-    email.hidden = false;
-  }
-}
-async function handleSignIn(){
-  const email = document.getElementById('authEmail').value.trim();
-  if(!email || !email.includes('@')){ setAuthMessage('Enter a valid email address.', true); return; }
-  setAuthMessage('Sending magic link…');
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname }
-  });
-  setAuthMessage(error ? error.message : 'Check your email for the sign-in link.', Boolean(error));
-}
-async function handleSignOut(){
-  const { error } = await supabaseClient.auth.signOut();
-  if(error) setAuthMessage(error.message, true);
-  else setAuthMessage('Signed out.');
-}
-
 async function readStorage(name){
-  if(!currentUser) return [];
   try { return JSON.parse(localStorage.getItem(storageKey(name)) || '[]'); }
   catch(e){ console.error(`Failed to load ${name}`, e); return []; }
 }
@@ -1015,16 +958,12 @@ function escapeHtml(str){
 }
 
 syncCalculatorInputs();
-renderAuth(null);
-document.getElementById('authSignIn').addEventListener('click', handleSignIn);
-document.getElementById('authSignOut').addEventListener('click', handleSignOut);
-document.getElementById('authEmail').addEventListener('keydown', (e) => { if(e.key === 'Enter') handleSignIn(); });
 supabaseClient.auth.onAuthStateChange((_event, session) => {
-  renderAuth(session?.user || null);
+  currentUser = session?.user || null;
   loadAll();
 });
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
-  renderAuth(session?.user || null);
+  currentUser = session?.user || null;
   loadAll();
 });
 

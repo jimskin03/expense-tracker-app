@@ -5,7 +5,7 @@ A lightweight, single-file web app to track income, expenses, and recurring paym
 ## Key characteristics
 - **Single-file HTML app**: index.html contains markup, styles, and JavaScript.
 - **Persistent data**: records are stored in browser `localStorage`, scoped by the authenticated Supabase user ID. This prevents accounts on the same device from seeing one another's records.
-- **Authentication**: uses the Cryptgreg Research Supabase project with email magic-link sign-in. The browser only contains the publishable key; no service-role secret is used.
+- **Authentication/session**: the app uses the shared Cryptgreg Research Supabase session when the user is signed in on the main site. No separate login screen is shown here.
 - **Visual analytics**: doughnut chart showing expense breakdown by category with interactive date filtering.
 - **Export**: CSV export of records is provided.
 
