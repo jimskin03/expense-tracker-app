@@ -148,6 +148,7 @@
       <a class="home-link" href="https://cryptgregresearch.org/" aria-label="Back to Cryptgreg Research">⌂ HOME</a>
       <div id="authArea" class="auth-area" aria-live="polite"></div>
     </header>
+    <p id="dataMessage" class="data-message" role="status" aria-live="polite"></p>
 
     <dialog id="authDialog" class="auth-dialog" aria-labelledby="authDialogTitle">
       <h2 id="authDialogTitle">Sign in</h2>
@@ -440,12 +441,19 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLI
 });
 
 let currentUser = null;
+const RECORDS_TABLE = 'expense_tracker_data';
 const authArea = document.getElementById('authArea');
 const authDialog = document.getElementById('authDialog');
 const authForm = document.getElementById('authForm');
 const authEmail = document.getElementById('authEmail');
 const authPassword = document.getElementById('authPassword');
 const authMessage = document.getElementById('authMessage');
+const dataMessage = document.getElementById('dataMessage');
+
+function setDataMessage(message, isError = false){
+  dataMessage.textContent = message;
+  dataMessage.classList.toggle('error', isError);
+}
 
 function setAuthMessage(message, isError = false){
   authMessage.textContent = message;
@@ -508,18 +516,90 @@ authForm.addEventListener('submit', async (event) => {
 function storageKey(name){
   return `ledger:${currentUser ? currentUser.id : 'public'}:${name}`;
 }
-async function readStorage(name){
-  try { return JSON.parse(localStorage.getItem(storageKey(name)) || '[]'); }
-  catch(e){ console.error(`Failed to load ${name}`, e); return []; }
+
+function readLegacyStorage(name){
+  if(!currentUser) return [];
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey(name)) || '[]');
+    return Array.isArray(value) ? value : [];
+  }
+  catch(e){ console.error(`Failed to load legacy ${name}`, e); return []; }
 }
-async function writeStorage(name, value){
-  localStorage.setItem(storageKey(name), JSON.stringify(value));
+
+function clearLegacyStorage(){
+  ['incomes', 'expenses', 'recurring'].forEach(name => localStorage.removeItem(storageKey(name)));
+}
+
+function recordsFromRow(row){
+  return {
+    incomes: Array.isArray(row?.incomes) ? row.incomes : [],
+    expenses: Array.isArray(row?.expenses) ? row.expenses : [],
+    recurring: Array.isArray(row?.recurring) ? row.recurring : [],
+  };
+}
+
+async function writeRecords(){
+  if(!currentUser) throw new Error('Please sign in before saving records.');
+  const { error } = await supabaseClient.from(RECORDS_TABLE).upsert({
+    user_id: currentUser.id,
+    incomes,
+    expenses,
+    recurring,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id' });
+  if(error) throw error;
+  setDataMessage('Saved to your account.');
+}
+
+function ensureSignedIn(){
+  if(currentUser) return true;
+  setAuthMessage('Sign in to save and manage your records.');
+  authDialog.showModal();
+  authEmail.focus();
+  return false;
 }
 
 async function loadAll(){
-  incomes = await readStorage('incomes');
-  expenses = await readStorage('expenses');
-  recurring = await readStorage('recurring');
+  if(!currentUser){
+    incomes = [];
+    expenses = [];
+    recurring = [];
+    setDataMessage('Sign in to load your saved records.');
+  } else {
+    const { data, error } = await supabaseClient
+      .from(RECORDS_TABLE)
+      .select('incomes, expenses, recurring')
+      .eq('user_id', currentUser.id)
+      .maybeSingle();
+
+    if(error){
+      incomes = [];
+      expenses = [];
+      recurring = [];
+      setDataMessage(`Could not load your records: ${error.message}`, true);
+    } else if(data){
+      ({ incomes, expenses, recurring } = recordsFromRow(data));
+      setDataMessage('Your records are synced to Supabase.');
+    } else {
+      const legacy = {
+        incomes: readLegacyStorage('incomes'),
+        expenses: readLegacyStorage('expenses'),
+        recurring: readLegacyStorage('recurring'),
+      };
+      ({ incomes, expenses, recurring } = legacy);
+      if(incomes.length || expenses.length || recurring.length){
+        try {
+          await writeRecords();
+          clearLegacyStorage();
+          setDataMessage('Your existing records were moved to Supabase.');
+        } catch(migrationError) {
+          setDataMessage(`Could not migrate existing records: ${migrationError.message}`, true);
+        }
+      } else {
+        setDataMessage('Your records are synced to Supabase.');
+      }
+    }
+  }
   renderActivityFeed();
   renderDashboard();
   renderRecurringList();
@@ -527,9 +607,22 @@ async function loadAll(){
   setupFilterListeners();
 }
 
-async function saveIncomes(){ await writeStorage('incomes', incomes); }
-async function saveExpenses(){ await writeStorage('expenses', expenses); }
-async function saveRecurringList(){ await writeStorage('recurring', recurring); }
+async function saveIncomes(){ await writeRecords(); }
+async function saveExpenses(){ await writeRecords(); }
+async function saveRecurringList(){ await writeRecords(); }
+
+async function persistOrReload(saveFunction){
+  try {
+    await saveFunction();
+    return true;
+  } catch(error) {
+    const message = error?.message || 'Unknown database error';
+    setDataMessage(`Could not save your records: ${message}`, true);
+    alert(`Could not save your records. ${message}`);
+    await loadAll();
+    return false;
+  }
+}
 
 function showPage(id){
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -602,6 +695,7 @@ expenseCategoryEl.addEventListener('change', () => {
 });
 
 async function addIncome(){
+  if(!ensureSignedIn()) return;
   const date = document.getElementById('incomeDate').value || new Date().toISOString().slice(0,10);
   let source = incomeSourceEl.value;
   if(source === 'Others') source = (incomeSourceOther.value || 'Others').trim();
@@ -610,7 +704,7 @@ async function addIncome(){
   if(isNaN(amount) || amount <= 0){ alert('Enter a valid income amount.'); return; }
 
   incomes.push({ type:'income', date, source, amount });
-  await saveIncomes();
+  if(!await persistOrReload(saveIncomes)) return;
   clearIncomeForm();
   showPage('recordsPage');
 }
@@ -624,6 +718,7 @@ function clearIncomeForm(){
 }
 
 async function addExpense(){
+  if(!ensureSignedIn()) return;
   const date = document.getElementById('expenseDate').value || new Date().toISOString().slice(0,10);
   let category = expenseCategoryEl.value;
   if(category === 'Others') category = (expenseCategoryOther.value || 'Others').trim();
@@ -633,7 +728,7 @@ async function addExpense(){
   if(isNaN(amount) || amount <= 0){ alert('Enter a valid expense amount.'); return; }
 
   expenses.push({ type:'expense', date, category, desc, amount });
-  await saveExpenses();
+  if(!await persistOrReload(saveExpenses)) return;
   clearExpenseForm();
   showPage('recordsPage');
 }
@@ -648,15 +743,17 @@ function clearExpenseForm(){
 }
 
 async function deleteRecord(type, index){
+  if(!ensureSignedIn()) return;
   if(!confirm('Delete this record?')) return;
-  if(type === 'income'){ incomes.splice(index,1); await saveIncomes(); }
-  else { expenses.splice(index,1); await saveExpenses(); }
+  if(type === 'income'){ incomes.splice(index,1); if(!await persistOrReload(saveIncomes)) return; }
+  else { expenses.splice(index,1); if(!await persistOrReload(saveExpenses)) return; }
   renderActivityFeed();
   renderDashboard();
   renderChart();
 }
 
 async function editRecord(type, index){
+  if(!ensureSignedIn()) return;
   let item = (type === 'income') ? incomes[index] : expenses[index];
   if(!item) return;
 
@@ -676,7 +773,7 @@ async function editRecord(type, index){
     }
     document.getElementById('incomeAmount').value = item.amount;
     incomes.splice(index,1);
-    await saveIncomes();
+    if(!await persistOrReload(saveIncomes)) return;
   } else {
     document.getElementById('expenseDate').value = item.date || '';
     const knownCats = ['Food','Groceries','Food Delivery','Transport','Ride-hailing','Fuel','Toll','Parking','Utilities','Rent','Mortgage','Insurance','Entertainment','Shopping','Health','Education','Travel','Home','Pets','Financial','Gifts'];
@@ -692,7 +789,7 @@ async function editRecord(type, index){
     document.getElementById('expenseDesc').value = item.desc || '';
     document.getElementById('expenseAmount').value = item.amount;
     expenses.splice(index,1);
-    await saveExpenses();
+    if(!await persistOrReload(saveExpenses)) return;
   }
 
   renderActivityFeed();
@@ -717,6 +814,7 @@ function todayStr(){
 }
 
 async function saveRecurring(){
+  if(!ensureSignedIn()) return;
   const type = document.getElementById('recurringType').value;
   const name = document.getElementById('recurringName').value.trim();
   const amount = parseFloat(document.getElementById('recurringAmount').value);
@@ -739,7 +837,7 @@ async function saveRecurring(){
     });
   }
 
-  await saveRecurringList();
+  if(!await persistOrReload(saveRecurringList)) return;
   clearRecurringForm();
   renderRecurringList();
 }
@@ -766,13 +864,15 @@ function editRecurring(id){
 }
 
 async function deleteRecurring(id){
+  if(!ensureSignedIn()) return;
   if(!confirm('Remove this recurring transaction? This cannot be undone.')) return;
   recurring = recurring.filter(r => r.id !== id);
-  await saveRecurringList();
+  if(!await persistOrReload(saveRecurringList)) return;
   renderRecurringList();
 }
 
 async function logRecurringPayment(id){
+  if(!ensureSignedIn()) return;
   const item = recurring.find(r => r.id === id);
   if(!item) return;
 
@@ -784,7 +884,7 @@ async function logRecurringPayment(id){
     desc: item.name + ' (recurring)',
     amount: item.amount
   });
-  await saveExpenses();
+  if(!await persistOrReload(saveExpenses)) return;
 
   renderActivityFeed();
   renderDashboard();

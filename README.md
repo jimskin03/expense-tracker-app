@@ -4,8 +4,8 @@ A lightweight, single-file web app to track income, expenses, and recurring paym
 
 ## Key characteristics
 - **Single-file HTML app**: index.html contains markup, styles, and JavaScript.
-- **Persistent data**: records are stored in browser `localStorage`, scoped by the authenticated Supabase user ID. This prevents accounts on the same device from seeing one another's records.
-- **Authentication/session**: the app uses the shared Cryptgreg Research Supabase session when the user is signed in on the main site. No separate login screen is shown here.
+- **Persistent data**: income, expense, and recurring records are stored in the shared Supabase project and scoped by the authenticated user ID. This makes records available across browsers and devices while keeping users isolated with Row Level Security.
+- **Authentication/session**: the app uses the shared Cryptgreg Research Supabase session when the user is signed in on the main site. A password sign-in dialog is available from the top bar when no session is present.
 - **Visual analytics**: doughnut chart showing expense breakdown by category with interactive date filtering.
 - **Export**: CSV export of records is provided.
 
@@ -61,7 +61,8 @@ cd expense-tracker-app
 
    - **Option B**: open the file directly in the browser: double-click `index.html` or open it via `file://` URL. (Some browsers restrict certain APIs for file URLs; using a simple HTTP server avoids this.)
 
-3. Start using it: Add income and expense records from the Add tab, view activity on the Records tab, and manage recurring payments on the Recurring tab.
+3. Apply the SQL migration in `supabase/migrations/20260911000000_create_expense_tracker_data.sql` to the shared Supabase project.
+4. Start using it: Sign in from the top bar, add income and expense records from the Add tab, view activity on the Records tab, and manage recurring payments on the Recurring tab.
 
 ## Usage
 
@@ -109,7 +110,7 @@ This is a minimal single-file SPA. The entire app lives in `index.html`. Major r
 
 - **Styling**: CSS variables at the top of the file (`:root`) control theme colors, radii, and layout. Chart-specific styles handle legend display and filter buttons.
 - **State**: five in-memory arrays `incomes`, `expenses`, `recurring`, plus `activeFilter` for current date range.
-- **Persistence**: `window.storage.get(name)` and `window.storage.set(name, value)` are used to persist data as JSON. The app expects these functions to return/store objects with a `.value` field on get.
+- **Persistence**: authenticated records are stored as JSON arrays in the user's row in the `public.expense_tracker_data` Supabase table. The table's Row Level Security policies allow each user to read, create, update, and delete only their own row. Calculator inputs remain in memory and are not account records.
 - **Rendering**: 
   - `renderActivityFeed()`: displays activity feed with optional date filtering
   - `renderDashboard()`: updates dashboard totals
@@ -131,7 +132,7 @@ If you plan to expand the project, consider:
 
 ## Data model
 
-The app stores three top-level JSON arrays as strings in storage:
+The app stores three JSON arrays in the user's `expense_tracker_data` row:
 
 ```javascript
 // incomes: array of income records
@@ -171,14 +172,16 @@ recurring = [
 
 CSV exports produce rows: `Type, Date, Category/Source, Description, Amount`.
 
-### Supabase authentication
+### Supabase authentication and data
 
-The app connects to the shared Cryptgreg Research Supabase project for passwordless email authentication. Add `expensetracker.cryptgregresearch.org` to the Supabase project's allowed redirect URLs before using magic links in production. Expense records currently remain in local browser storage, but are isolated by Supabase user ID; a database-backed sync should be added only with an approved schema and RLS policy.
+The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. Apply the SQL migration in `supabase/migrations/20260911000000_create_expense_tracker_data.sql` before using record storage. It creates the `public.expense_tracker_data` table and Row Level Security policies that restrict every row operation to `auth.uid() = user_id`.
+
+Existing records from the previous local-storage version are migrated automatically the first time a signed-in user loads the app, if that user does not already have a Supabase record row. After a successful migration, the old local copies are removed. New records are written to Supabase immediately; calculator inputs remain local to the current page.
 ## Runtime / Compatibility notes
 
 - The app is a static HTML file and works in modern Chromium/Firefox/Safari browsers.
 - Supabase authentication requires an internet connection and a redirect URL allowed by the Supabase project.
-- Expense data is local to the current browser and account; clearing site data removes the local copy. Use CSV export for backups.
+- Expense data is stored in Supabase and is available after signing in from another browser or device. Use CSV export for a portable backup.
 - Chart.js is loaded from CDN. An internet connection is required for charts to render. You can download Chart.js locally if needed.
 - If you deploy to GitHub Pages, the app will be served statically. Enable Pages in the repository settings and set the deployment branch to `main` and the folder to `/`.
 
