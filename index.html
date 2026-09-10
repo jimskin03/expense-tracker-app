@@ -24,6 +24,20 @@
   html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
     font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;-webkit-font-smoothing:antialiased}
   .container{padding:20px;padding-bottom:96px;max-width:900px;margin:0 auto}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:26px}
+  .home-link{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.04em;text-decoration:none;white-space:nowrap}
+  .auth-area{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
+  .auth-user{color:var(--text);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .auth-btn{background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);cursor:pointer;font-size:12px;font-weight:700;padding:9px 12px;white-space:nowrap}
+  .auth-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .auth-btn.primary{background:var(--accent);border-color:var(--accent);color:#04201b}
+  .auth-dialog{background:var(--card);border:1px solid var(--border);border-radius:14px;color:var(--text);max-width:360px;padding:22px;width:calc(100% - 40px)}
+  .auth-dialog::backdrop{background:rgba(0,0,0,.72)}
+  .auth-dialog h2{margin-top:0}
+  .auth-dialog label{color:var(--muted);display:block;font-size:12px;margin:12px 0 5px}
+  .auth-dialog .dialog-actions{display:flex;gap:8px;margin-top:18px}
+  .auth-dialog .dialog-actions button{flex:1}
+  .auth-message{color:var(--muted);font-size:12px;min-height:18px}
   h1{margin:0 0 4px 0;font-weight:700;font-size:24px;letter-spacing:-0.02em}
   .subtitle{color:var(--muted);font-size:13px;margin-bottom:20px}
   h2{margin:0 0 14px 0;font-weight:600;font-size:16px;letter-spacing:-0.01em}
@@ -34,6 +48,8 @@
     box-shadow:0 -8px 24px rgba(0,0,0,0.5)}
   .nav button{background:none;border:0;color:var(--muted);font-size:14px;font-weight:600;
     padding:10px 14px;flex:1;cursor:pointer;transition:color .15s}
+  .nav-home{color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.04em;
+    padding:10px 14px;text-decoration:none;white-space:nowrap}
   .nav button.active-tab{color:var(--accent)}
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
     padding:16px;margin-bottom:14px}
@@ -127,6 +143,26 @@
 </head>
 <body>
   <div class="container">
+
+    <header class="topbar">
+      <a class="home-link" href="https://cryptgregresearch.org/" aria-label="Back to Cryptgreg Research">⌂ HOME</a>
+      <div id="authArea" class="auth-area" aria-live="polite"></div>
+    </header>
+
+    <dialog id="authDialog" class="auth-dialog" aria-labelledby="authDialogTitle">
+      <h2 id="authDialogTitle">Sign in</h2>
+      <form id="authForm">
+        <label for="authEmail">Email</label>
+        <input id="authEmail" type="email" autocomplete="email" required placeholder="you@example.com" />
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" autocomplete="current-password" required placeholder="Your password" />
+        <p id="authMessage" class="auth-message" role="status"></p>
+        <div class="dialog-actions">
+          <button class="btn secondary" id="authCancel" type="button">Cancel</button>
+          <button class="btn" type="submit">Sign in</button>
+        </div>
+      </form>
+    </dialog>
 
     <!-- RECORDS + DASHBOARD -->
     <div id="recordsPage" class="page active">
@@ -346,6 +382,7 @@
     </div>
 
   <div class="nav" role="navigation" aria-label="Main navigation">
+    <a class="nav-home" href="https://cryptgregresearch.org/" aria-label="Back to Cryptgreg Research">CRYPTGREG RESEARCH</a>
     <button id="tabRecords" class="active-tab" onclick="showPage('recordsPage')">Records</button>
     <button id="tabAdd" onclick="showPage('addPage')">Add</button>
     <button id="tabRecurring" onclick="showPage('recurringPage')">Recurring</button>
@@ -368,6 +405,15 @@ const colorPalette = [
 
 const SUPABASE_URL = 'https://vlnocfdiexkqcnfbjhqt.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ys0Cl98LLqAdNEiNY1f7Mg_lddIzr6F';
+const ROOT_DOMAIN = 'cryptgregresearch.org';
+
+function sharedCookieDomain(){
+  const hostname = location.hostname;
+  return hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`)
+    ? `; Domain=${ROOT_DOMAIN}`
+    : '';
+}
+
 const sharedCookieStorage = {
   getItem(key){
     const cookie = document.cookie.split('; ').find(item => item.startsWith(`${key}=`));
@@ -377,12 +423,14 @@ const sharedCookieStorage = {
     return legacy;
   },
   setItem(key, value){
-    const domain = location.hostname.endsWith('.cryptgregresearch.org') ? '; Domain=.cryptgregresearch.org' : '';
+    const domain = sharedCookieDomain();
+    document.cookie = `${key}=; Max-Age=0; Path=/; Secure; SameSite=Lax`;
     document.cookie = `${key}=${encodeURIComponent(value)}; Max-Age=31536000; Path=/${domain}; Secure; SameSite=Lax`;
     localStorage.setItem(key, value);
   },
   removeItem(key){
-    const domain = location.hostname.endsWith('.cryptgregresearch.org') ? '; Domain=.cryptgregresearch.org' : '';
+    const domain = sharedCookieDomain();
+    document.cookie = `${key}=; Max-Age=0; Path=/; Secure; SameSite=Lax`;
     document.cookie = `${key}=; Max-Age=0; Path=/${domain}; Secure; SameSite=Lax`;
     localStorage.removeItem(key);
   }
@@ -392,6 +440,70 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLI
 });
 
 let currentUser = null;
+const authArea = document.getElementById('authArea');
+const authDialog = document.getElementById('authDialog');
+const authForm = document.getElementById('authForm');
+const authEmail = document.getElementById('authEmail');
+const authPassword = document.getElementById('authPassword');
+const authMessage = document.getElementById('authMessage');
+
+function setAuthMessage(message, isError = false){
+  authMessage.textContent = message;
+  authMessage.style.color = isError ? 'var(--expense)' : '';
+}
+
+function renderAuth(session){
+  authArea.replaceChildren();
+
+  if(session?.user){
+    const user = document.createElement('span');
+    user.className = 'auth-user';
+    user.title = session.user.email || 'Signed in';
+    user.textContent = `◉ ${session.user.email || 'Signed in'}`;
+
+    const logout = document.createElement('button');
+    logout.className = 'auth-btn';
+    logout.type = 'button';
+    logout.textContent = 'Log out';
+    logout.addEventListener('click', async () => {
+      const { error } = await supabaseClient.auth.signOut();
+      if(error) setAuthMessage(error.message, true);
+    });
+
+    authArea.append(user, logout);
+    return;
+  }
+
+  const signIn = document.createElement('button');
+  signIn.className = 'auth-btn primary';
+  signIn.type = 'button';
+  signIn.textContent = 'Sign in';
+  signIn.addEventListener('click', () => {
+    setAuthMessage('');
+    authDialog.showModal();
+    authEmail.focus();
+  });
+  authArea.append(signIn);
+}
+
+document.getElementById('authCancel').addEventListener('click', () => authDialog.close());
+authDialog.addEventListener('click', (event) => {
+  if(event.target === authDialog) authDialog.close();
+});
+authForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setAuthMessage('Signing in…');
+  const { error } = await supabaseClient.auth.signInWithPassword({
+    email: authEmail.value.trim(),
+    password: authPassword.value,
+  });
+  if(error){
+    setAuthMessage(error.message, true);
+    return;
+  }
+  authPassword.value = '';
+  authDialog.close();
+});
 
 function storageKey(name){
   return `ledger:${currentUser ? currentUser.id : 'public'}:${name}`;
@@ -960,10 +1072,12 @@ function escapeHtml(str){
 syncCalculatorInputs();
 supabaseClient.auth.onAuthStateChange((_event, session) => {
   currentUser = session?.user || null;
+  renderAuth(session);
   loadAll();
 });
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
   currentUser = session?.user || null;
+  renderAuth(session);
   loadAll();
 });
 
