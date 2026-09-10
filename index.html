@@ -34,6 +34,8 @@
     box-shadow:0 -8px 24px rgba(0,0,0,0.5)}
   .nav button{background:none;border:0;color:var(--muted);font-size:14px;font-weight:600;
     padding:10px 14px;flex:1;cursor:pointer;transition:color .15s}
+  .nav-home{color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.04em;
+    padding:10px 14px;text-decoration:none;white-space:nowrap}
   .nav button.active-tab{color:var(--accent)}
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
     padding:16px;margin-bottom:14px}
@@ -346,6 +348,7 @@
     </div>
 
   <div class="nav" role="navigation" aria-label="Main navigation">
+    <a class="nav-home" href="https://cryptgregresearch.org/" aria-label="Back to Cryptgreg Research">CRYPTGREG RESEARCH</a>
     <button id="tabRecords" class="active-tab" onclick="showPage('recordsPage')">Records</button>
     <button id="tabAdd" onclick="showPage('addPage')">Add</button>
     <button id="tabRecurring" onclick="showPage('recurringPage')">Recurring</button>
@@ -368,6 +371,15 @@ const colorPalette = [
 
 const SUPABASE_URL = 'https://vlnocfdiexkqcnfbjhqt.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ys0Cl98LLqAdNEiNY1f7Mg_lddIzr6F';
+const ROOT_DOMAIN = 'cryptgregresearch.org';
+
+function sharedCookieDomain(){
+  const hostname = location.hostname;
+  return hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`)
+    ? `; Domain=${ROOT_DOMAIN}`
+    : '';
+}
+
 const sharedCookieStorage = {
   getItem(key){
     const cookie = document.cookie.split('; ').find(item => item.startsWith(`${key}=`));
@@ -377,12 +389,14 @@ const sharedCookieStorage = {
     return legacy;
   },
   setItem(key, value){
-    const domain = location.hostname.endsWith('.cryptgregresearch.org') ? '; Domain=.cryptgregresearch.org' : '';
+    const domain = sharedCookieDomain();
+    document.cookie = `${key}=; Max-Age=0; Path=/; Secure; SameSite=Lax`;
     document.cookie = `${key}=${encodeURIComponent(value)}; Max-Age=31536000; Path=/${domain}; Secure; SameSite=Lax`;
     localStorage.setItem(key, value);
   },
   removeItem(key){
-    const domain = location.hostname.endsWith('.cryptgregresearch.org') ? '; Domain=.cryptgregresearch.org' : '';
+    const domain = sharedCookieDomain();
+    document.cookie = `${key}=; Max-Age=0; Path=/; Secure; SameSite=Lax`;
     document.cookie = `${key}=; Max-Age=0; Path=/${domain}; Secure; SameSite=Lax`;
     localStorage.removeItem(key);
   }
