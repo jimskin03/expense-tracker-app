@@ -4,7 +4,8 @@ A lightweight, single-file web app to track income, expenses, and recurring paym
 
 ## Key characteristics
 - **Single-file HTML app**: index.html contains markup, styles, and JavaScript.
-- **Persistent data**: uses a `window.storage` API to persist JSON blobs keyed as `incomes`, `expenses`, and `recurring`. If `window.storage` is not available in your runtime, see the notes below.
+- **Persistent data**: records are stored in browser `localStorage`, scoped by the authenticated Supabase user ID. This prevents accounts on the same device from seeing one another's records.
+- **Authentication**: uses the Cryptgreg Research Supabase project with email magic-link sign-in. The browser only contains the publishable key; no service-role secret is used.
 - **Visual analytics**: doughnut chart showing expense breakdown by category with interactive date filtering.
 - **Export**: CSV export of records is provided.
 
@@ -170,24 +171,14 @@ recurring = [
 
 CSV exports produce rows: `Type, Date, Category/Source, Description, Amount`.
 
+### Supabase authentication
+
+The app connects to the shared Cryptgreg Research Supabase project for passwordless email authentication. Add `expensetracker.cryptgregresearch.org` to the Supabase project's allowed redirect URLs before using magic links in production. Expense records currently remain in local browser storage, but are isolated by Supabase user ID; a database-backed sync should be added only with an approved schema and RLS policy.
 ## Runtime / Compatibility notes
 
 - The app is a static HTML file and works in modern Chromium/Firefox/Safari browsers.
-- The code uses `window.storage.get` / `window.storage.set`. This is not a standard browser API. If running in a plain browser, provide a polyfill:
-
-  ```javascript
-  // Run in the page console before interacting with the app, or embed in index.html
-  window.storage = {
-    async get(key){
-      const v = localStorage.getItem(key);
-      return v ? { value: v } : null;
-    },
-    async set(key, value){
-      localStorage.setItem(key, value);
-    }
-  };
-  ```
-
+- Supabase authentication requires an internet connection and a redirect URL allowed by the Supabase project.
+- Expense data is local to the current browser and account; clearing site data removes the local copy. Use CSV export for backups.
 - Chart.js is loaded from CDN. An internet connection is required for charts to render. You can download Chart.js locally if needed.
 - If you deploy to GitHub Pages, the app will be served statically. Enable Pages in the repository settings and set the deployment branch to `main` and the folder to `/`.
 
