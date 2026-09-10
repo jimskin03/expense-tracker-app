@@ -104,6 +104,17 @@
     background:var(--card-2);border-radius:9px;animation:slideDown .3s ease}
   .custom-date-inputs.active{display:flex}
   @keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+
+  /* Compound calculator */
+  .calc-grid{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:14px}
+  .calc-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+  .calc-stat{background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:13px}
+  .calc-stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+  .calc-stat-value{font-size:20px;font-weight:700}
+  .calc-stat-value.mint{color:var(--income)} .calc-stat-value.gold{color:var(--warn)}
+  .calc-chart{height:280px;position:relative}
+  .calc-note{font-size:12px;line-height:1.55;color:var(--muted);margin-top:14px}
+  @media(max-width:650px){.calc-grid,.calc-stats{grid-template-columns:1fr}}
   
   @media(min-width:760px){
     .container{padding:32px}
@@ -309,10 +320,36 @@
 
   </div>
 
+    <!-- COMPOUND CALCULATOR PAGE -->
+    <div id="calculatorPage" class="page">
+      <h1>Compound Growth</h1>
+      <div class="subtitle">Model how regular saving could grow over time.</div>
+      <div class="calc-grid">
+        <div class="card">
+          <h2>Assumptions</h2>
+          <div style="margin-bottom:14px"><label class="small" for="calcInitial">Initial deposit (RM)</label><input id="calcInitial" type="number" value="5000" min="0" step="100"></div>
+          <div style="margin-bottom:14px"><label class="small" for="calcMonthly">Monthly deposit (RM)</label><input id="calcMonthly" type="number" value="500" min="0" step="50"></div>
+          <div style="margin-bottom:14px"><label class="small" for="calcRate">Annual interest rate (%)</label><input id="calcRate" type="number" value="4" min="0" max="30" step="0.1"><input id="calcRateSlider" type="range" min="0" max="15" step="0.1" value="4" aria-label="Annual interest rate slider"></div>
+          <div style="margin-bottom:14px"><label class="small" for="calcYears">Tenure (years)</label><input id="calcYears" type="number" value="10" min="1" max="50" step="1"><input id="calcYearsSlider" type="range" min="1" max="40" step="1" value="10" aria-label="Tenure slider"></div>
+          <button class="btn full" onclick="calculateGrowth()">Calculate</button>
+        </div>
+        <div>
+          <div class="calc-stats">
+            <div class="calc-stat"><div class="calc-stat-label">Final balance</div><div class="calc-stat-value" id="calcFinal">RM 0</div></div>
+            <div class="calc-stat"><div class="calc-stat-label">Contributed</div><div class="calc-stat-value mint" id="calcContributed">RM 0</div></div>
+            <div class="calc-stat"><div class="calc-stat-label">Interest earned</div><div class="calc-stat-value gold" id="calcInterest">RM 0</div></div>
+          </div>
+          <div class="card"><h2>Balance over time</h2><div class="calc-chart"><canvas id="growthChart"></canvas></div></div>
+          <div class="calc-note">Estimate only: assumes monthly compounding and deposits at month end. This is not financial advice; actual returns vary by account and market conditions.</div>
+        </div>
+      </div>
+    </div>
+
   <div class="nav" role="navigation" aria-label="Main navigation">
     <button id="tabRecords" class="active-tab" onclick="showPage('recordsPage')">Records</button>
     <button id="tabAdd" onclick="showPage('addPage')">Add</button>
     <button id="tabRecurring" onclick="showPage('recurringPage')">Recurring</button>
+    <button id="tabCalculator" onclick="showPage('calculatorPage')">Calculator</button>
   </div>
 
 <script>
@@ -369,12 +406,49 @@ function showPage(id){
   document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active-tab'));
   if(id === 'recordsPage') document.getElementById('tabRecords').classList.add('active-tab');
   else if(id === 'addPage') document.getElementById('tabAdd').classList.add('active-tab');
-  else document.getElementById('tabRecurring').classList.add('active-tab');
+  else if(id === 'recurringPage') document.getElementById('tabRecurring').classList.add('active-tab');
+  else document.getElementById('tabCalculator').classList.add('active-tab');
 
   renderActivityFeed();
   renderDashboard();
   renderRecurringList();
   renderChart();
+  if(id === 'calculatorPage') calculateGrowth();
+}
+
+let growthChart = null;
+function money(value){ return 'RM ' + value.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); }
+function calculateGrowth(){
+  const initial = Math.max(0, Number(document.getElementById('calcInitial').value) || 0);
+  const monthly = Math.max(0, Number(document.getElementById('calcMonthly').value) || 0);
+  const rate = Math.max(0, Number(document.getElementById('calcRate').value) || 0);
+  const years = Math.max(1, Math.min(50, Math.floor(Number(document.getElementById('calcYears').value) || 1)));
+  let balance = initial, contributed = initial;
+  const labels = ['Year 0'], principals = [initial], interest = [0];
+  for(let month=1; month<=years*12; month++){
+    balance = balance * (1 + rate / 100 / 12) + monthly;
+    contributed += monthly;
+    if(month % 12 === 0){ labels.push('Year ' + month/12); principals.push(Math.round(contributed)); interest.push(Math.max(0, Math.round(balance-contributed))); }
+  }
+  document.getElementById('calcFinal').textContent = money(balance);
+  document.getElementById('calcContributed').textContent = money(contributed);
+  document.getElementById('calcInterest').textContent = money(Math.max(0,balance-contributed));
+  const ctx = document.getElementById('growthChart').getContext('2d');
+  if(growthChart) growthChart.destroy();
+  growthChart = new Chart(ctx,{type:'line',data:{labels,datasets:[
+    {label:'Principal',data:principals,borderColor:'#5eead4',backgroundColor:'rgba(94,234,212,.16)',fill:true,tension:.25,pointRadius:2},
+    {label:'Interest',data:interest,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.16)',fill:true,tension:.25,pointRadius:2}
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#eceeef'}}},scales:{x:{ticks:{color:'#8b8d93'},grid:{color:'rgba(255,255,255,.04)'}},y:{ticks:{color:'#8b8d93',callback:v=>money(v)},grid:{color:'rgba(255,255,255,.06)'}}}}});
+}
+
+function syncCalculatorInputs(){
+  [['calcRate','calcRateSlider'],['calcYears','calcYearsSlider']].forEach(([numberId,sliderId])=>{
+    const number = document.getElementById(numberId), slider = document.getElementById(sliderId);
+    number.addEventListener('input',()=>{ slider.value=number.value; calculateGrowth(); });
+    slider.addEventListener('input',()=>{ number.value=slider.value; calculateGrowth(); });
+  });
+  ['calcInitial','calcMonthly','calcRate','calcYears'].forEach(id=>document.getElementById(id).addEventListener('input',calculateGrowth));
+  calculateGrowth();
 }
 
 const incomeSourceEl = document.getElementById('incomeSource');
@@ -863,6 +937,7 @@ function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 }
 
+syncCalculatorInputs();
 loadAll();
 
 document.addEventListener('keydown', (e) => {

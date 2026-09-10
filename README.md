@@ -17,6 +17,7 @@ A lightweight, single-file web app to track income, expenses, and recurring paym
 - ✅ **Filtered activity feed**: View transactions based on selected date range
 - ✅ **Dynamic chart updates**: Chart automatically updates when date filter changes
 - ✅ CSV export for offline analysis
+- ✅ Compound growth calculator with monthly contribution and interest chart
 - ✅ Keyboard shortcut: press `n` to open the Add page
 
 ## Quick links
