@@ -385,7 +385,29 @@ const colorPalette = [
 
 const SUPABASE_URL = 'https://vlnocfdiexkqcnfbjhqt.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ys0Cl98LLqAdNEiNY1f7Mg_lddIzr6F';
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const sharedCookieStorage = {
+  getItem(key){
+    const cookie = document.cookie.split('; ').find(item => item.startsWith(`${key}=`));
+    if(cookie) return decodeURIComponent(cookie.slice(key.length + 1));
+    const legacy = localStorage.getItem(key);
+    if(legacy) this.setItem(key, legacy);
+    return legacy;
+  },
+  setItem(key, value){
+    const domain = location.hostname.endsWith('.cryptgregresearch.org') ? '; Domain=.cryptgregresearch.org' : '';
+    document.cookie = `${key}=${encodeURIComponent(value)}; Max-Age=31536000; Path=/${domain}; Secure; SameSite=Lax`;
+    localStorage.setItem(key, value);
+  },
+  removeItem(key){
+    const domain = location.hostname.endsWith('.cryptgregresearch.org') ? '; Domain=.cryptgregresearch.org' : '';
+    document.cookie = `${key}=; Max-Age=0; Path=/${domain}; Secure; SameSite=Lax`;
+    localStorage.removeItem(key);
+  }
+};
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: { storage: sharedCookieStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
+
 let currentUser = null;
 
 function storageKey(name){
