@@ -493,7 +493,101 @@ create table if not exists expense.migration_baseline (
 alter table expense.migration_baseline enable row level security;
 
 -- ---------------------------------------------------------------------------
--- 11. Backfill from the live legacy tables (idempotent)
+-- 11. Row Level Security + grants
+-- ---------------------------------------------------------------------------
+-- This MUST come before the backfill inserts. The Supabase migration API runs
+-- the whole script in ONE transaction, and Postgres refuses any ALTER TABLE -
+-- which is what ENABLE ROW LEVEL SECURITY and CREATE POLICY are - on a relation
+-- that still has pending deferred trigger events. The backfill's inserts queue
+-- those events (transactions_transfer_group_assert is DEFERRABLE INITIALLY
+-- DEFERRED), so anything that ALTERs expense.transactions after the backfill
+-- fails with SQLSTATE 55006. The backfill runs as the migration owner, which
+-- bypasses RLS, so enabling it first is safe.
+alter table expense.transactions enable row level security;
+alter table expense.categories enable row level security;
+alter table expense.receipts enable row level security;
+
+drop policy if exists "Users can read their account transactions" on expense.transactions;
+create policy "Users can read their account transactions"
+  on expense.transactions for select to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can create their account transactions" on expense.transactions;
+create policy "Users can create their account transactions"
+  on expense.transactions for insert to authenticated
+  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can update their account transactions" on expense.transactions;
+create policy "Users can update their account transactions"
+  on expense.transactions for update to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())))
+  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+-- Only self-entered rows may be hard deleted; everything else is reversed.
+drop policy if exists "Users can delete their own manual transactions" on expense.transactions;
+create policy "Users can delete their own manual transactions"
+  on expense.transactions for delete to authenticated
+  using (
+    source_type = 'manual'
+    and status <> 'reversed'
+    and exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid()))
+  );
+
+drop policy if exists "Users can read their account categories" on expense.categories;
+create policy "Users can read their account categories"
+  on expense.categories for select to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can create their account categories" on expense.categories;
+create policy "Users can create their account categories"
+  on expense.categories for insert to authenticated
+  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can update their account categories" on expense.categories;
+create policy "Users can update their account categories"
+  on expense.categories for update to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())))
+  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can read their account receipts" on expense.receipts;
+create policy "Users can read their account receipts"
+  on expense.receipts for select to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can create their account receipts" on expense.receipts;
+create policy "Users can create their account receipts"
+  on expense.receipts for insert to authenticated
+  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can update their account receipts" on expense.receipts;
+create policy "Users can update their account receipts"
+  on expense.receipts for update to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())))
+  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+drop policy if exists "Users can delete their account receipts" on expense.receipts;
+create policy "Users can delete their account receipts"
+  on expense.receipts for delete to authenticated
+  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
+
+grant select, insert, update, delete on expense.transactions to authenticated;
+grant select on expense.counted_transactions to authenticated;
+grant select, insert, update, delete on expense.categories to authenticated;
+grant select, insert, update, delete on expense.receipts to authenticated;
+grant usage on sequence expense.transaction_reference_seq to authenticated;
+grant execute on function expense.next_transaction_reference() to authenticated;
+grant execute on function expense.create_transfer(uuid, uuid, numeric, date, text) to authenticated;
+grant execute on function expense.reverse_transaction(uuid, text) to authenticated;
+
+revoke all on expense.transactions from anon;
+revoke all on expense.counted_transactions from anon;
+revoke all on expense.categories from anon;
+revoke all on expense.receipts from anon;
+revoke all on expense.migration_baseline from anon, authenticated;
+revoke all on sequence expense.transaction_reference_seq from anon;
+
+-- ---------------------------------------------------------------------------
+-- 12. Backfill from the live legacy tables (idempotent, runs LAST)
 -- ---------------------------------------------------------------------------
 -- Source preference matters and is not the obvious one:
 --   expense.expenses / expense.incomes  = the LIVE superset. The accounts-layer
@@ -712,87 +806,5 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 12. Row Level Security + grants
+-- (RLS + grants deliberately live ABOVE the backfill - see section 11.)
 -- ---------------------------------------------------------------------------
-alter table expense.transactions enable row level security;
-alter table expense.categories enable row level security;
-alter table expense.receipts enable row level security;
-
-drop policy if exists "Users can read their account transactions" on expense.transactions;
-create policy "Users can read their account transactions"
-  on expense.transactions for select to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can create their account transactions" on expense.transactions;
-create policy "Users can create their account transactions"
-  on expense.transactions for insert to authenticated
-  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can update their account transactions" on expense.transactions;
-create policy "Users can update their account transactions"
-  on expense.transactions for update to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())))
-  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
--- Only self-entered rows may be hard deleted; everything else is reversed.
-drop policy if exists "Users can delete their own manual transactions" on expense.transactions;
-create policy "Users can delete their own manual transactions"
-  on expense.transactions for delete to authenticated
-  using (
-    source_type = 'manual'
-    and status <> 'reversed'
-    and exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid()))
-  );
-
-drop policy if exists "Users can read their account categories" on expense.categories;
-create policy "Users can read their account categories"
-  on expense.categories for select to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can create their account categories" on expense.categories;
-create policy "Users can create their account categories"
-  on expense.categories for insert to authenticated
-  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can update their account categories" on expense.categories;
-create policy "Users can update their account categories"
-  on expense.categories for update to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())))
-  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can read their account receipts" on expense.receipts;
-create policy "Users can read their account receipts"
-  on expense.receipts for select to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can create their account receipts" on expense.receipts;
-create policy "Users can create their account receipts"
-  on expense.receipts for insert to authenticated
-  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can update their account receipts" on expense.receipts;
-create policy "Users can update their account receipts"
-  on expense.receipts for update to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())))
-  with check (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-drop policy if exists "Users can delete their account receipts" on expense.receipts;
-create policy "Users can delete their account receipts"
-  on expense.receipts for delete to authenticated
-  using (exists (select 1 from expense.accounts a where a.id = account_id and a.user_id = (select auth.uid())));
-
-grant select, insert, update, delete on expense.transactions to authenticated;
-grant select on expense.counted_transactions to authenticated;
-grant select, insert, update, delete on expense.categories to authenticated;
-grant select, insert, update, delete on expense.receipts to authenticated;
-grant usage on sequence expense.transaction_reference_seq to authenticated;
-grant execute on function expense.next_transaction_reference() to authenticated;
-grant execute on function expense.create_transfer(uuid, uuid, numeric, date, text) to authenticated;
-grant execute on function expense.reverse_transaction(uuid, text) to authenticated;
-
-revoke all on expense.transactions from anon;
-revoke all on expense.counted_transactions from anon;
-revoke all on expense.categories from anon;
-revoke all on expense.receipts from anon;
-revoke all on expense.migration_baseline from anon, authenticated;
-revoke all on sequence expense.transaction_reference_seq from anon;
