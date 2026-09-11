@@ -61,7 +61,7 @@ cd expense-tracker-app
 
    - **Option B**: open the file directly in the browser: double-click `index.html` or open it via `file://` URL. (Some browsers restrict certain APIs for file URLs; using a simple HTTP server avoids this.)
 
-3. Apply the SQL migration in `supabase/migrations/20260911010000_rename_expense_tracker_data_to_financial_data.sql` to the shared Supabase project.
+3. Apply the SQL migration in `supabase/migrations/20260911000000_create_expense_tracker_data.sql` to the shared Supabase project.
 4. Start using it: Sign in from the top bar, add income and expense records from the Add tab, view activity on the Records tab, and manage recurring payments on the Recurring tab.
 
 ## Usage
@@ -110,7 +110,7 @@ This is a minimal single-file SPA. The entire app lives in `index.html`. Major r
 
 - **Styling**: CSS variables at the top of the file (`:root`) control theme colors, radii, and layout. Chart-specific styles handle legend display and filter buttons.
 - **State**: five in-memory arrays `incomes`, `expenses`, `recurring`, plus `activeFilter` for current date range.
-- **Persistence**: authenticated records are stored as JSON arrays in the user's row in the `public.financial_data` Supabase table. The table's Row Level Security policies allow each user to read, create, update, and delete only their own row. Calculator inputs remain in memory and are not account records.
+- **Persistence**: authenticated records are stored as JSON arrays in the user's row in the `public.expense_tracker_data` Supabase table. The table's Row Level Security policies allow each user to read, create, update, and delete only their own row. Calculator inputs remain in memory and are not account records.
 - **Rendering**: 
   - `renderActivityFeed()`: displays activity feed with optional date filtering
   - `renderDashboard()`: updates dashboard totals
@@ -132,7 +132,7 @@ If you plan to expand the project, consider:
 
 ## Data model
 
-The app stores three JSON arrays in the user's `financial_data` row:
+The app stores three JSON arrays in the user's `expense_tracker_data` row:
 
 ```javascript
 // incomes: array of income records
@@ -174,7 +174,7 @@ CSV exports produce rows: `Type, Date, Category/Source, Description, Amount`.
 
 ### Supabase authentication and data
 
-The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. Apply the SQL migration in `supabase/migrations/20260911010000_rename_expense_tracker_data_to_financial_data.sql` before using record storage. It creates the `public.financial_data` table and Row Level Security policies that restrict every row operation to `auth.uid() = user_id`.
+The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. Apply the SQL migration in `supabase/migrations/20260911000000_create_expense_tracker_data.sql` before using record storage. It creates the `public.expense_tracker_data` table and Row Level Security policies that restrict every row operation to `auth.uid() = user_id`.
 
 Existing records from the previous local-storage version are migrated automatically the first time a signed-in user loads the app, if that user does not already have a Supabase record row. After a successful migration, the old local copies are removed. New records are written to Supabase immediately; calculator inputs remain local to the current page.
 ## Runtime / Compatibility notes
