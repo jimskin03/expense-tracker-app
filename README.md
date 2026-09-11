@@ -61,7 +61,7 @@ cd expense-tracker-app
 
    - **Option B**: open the file directly in the browser: double-click `index.html` or open it via `file://` URL. (Some browsers restrict certain APIs for file URLs; using a simple HTTP server avoids this.)
 
-3. Apply the SQL migrations in `supabase/migrations/` to the shared Supabase project in filename order. The account-layer migration is `20260911080221_add_expense_accounts_layer.sql`; the archive migration is `20260911082916_archive_legacy_public_expense_tables.sql`. The archive migration preserves the old data in a non-exposed `archive` schema.
+3. Apply the SQL migration in `supabase/migrations/20260911010000_rename_expense_tracker_data_to_financial_data.sql` to the shared Supabase project.
 4. Start using it: Sign in from the top bar, add income and expense records from the Add tab, view activity on the Records tab, and manage recurring payments on the Recurring tab.
 
 ## Usage
@@ -110,7 +110,7 @@ This is a minimal single-file SPA. The entire app lives in `index.html`. Major r
 
 - **Styling**: CSS variables at the top of the file (`:root`) control theme colors, radii, and layout. Chart-specific styles handle legend display and filter buttons.
 - **State**: five in-memory arrays `incomes`, `expenses`, `recurring`, plus `activeFilter` for current date range.
-- **Persistence**: authenticated records are stored as individual rows in the exposed `expense` schema: `expense.incomes`, `expense.expenses`, and `expense.recurring`. Every user has an `expense.accounts` row linked to `auth.users`; record rows reference that account through `account_id`, and Row Level Security limits every operation to the owning user. Calculator inputs remain in memory and are not account records.
+- **Persistence**: authenticated records are stored as JSON arrays in the user's row in the `public.financial_data` Supabase table. The table's Row Level Security policies allow each user to read, create, update, and delete only their own row. Calculator inputs remain in memory and are not account records.
 - **Rendering**: 
   - `renderActivityFeed()`: displays activity feed with optional date filtering
   - `renderDashboard()`: updates dashboard totals
@@ -120,56 +120,63 @@ This is a minimal single-file SPA. The entire app lives in `index.html`. Major r
   - `getFilteredExpenses()`: returns expenses matching the active date filter
   - `groupByCategory()`: aggregates expenses by category for charting
   - `setupFilterListeners()`: sets up date filter button handlers
-- **Actions**: `addIncome`, `addExpense`, `saveRecurring`, `editRecord`, `deleteRecord`, and `logRecurringPayment` perform row-level database operations by record ID.
+- **Actions**: functions like `addIncome`, `addExpense`, `saveRecurring`, `editRecord`, `deleteRecord`, `logRecurringPayment` implement user interactions.
 
 ### Adding New Features
 
-If you plan to expand the project, add a dedicated table in the appropriate service schema and link it to that service's account boundary. For the expense tracker, records belong to `expense.accounts` through `account_id`; RLS must authorize the account's `user_id = auth.uid()`. Do not add unrelated service data to the expense tables or modify `auth.users` directly.
+If you plan to expand the project, consider:
+- Splitting the JavaScript into modules for easier maintenance
+- Adding a build step for minification
+- Replacing inline styles with a component-based approach
+- Adding unit tests for core calculation functions
 
 ## Data model
 
-The account-layer migration creates an account row for each existing Supabase Auth user and copies normalized rows beneath that account. The new tables are `expense.incomes`, `expense.expenses`, and `expense.recurring`; each has an `account_id` foreign key to `expense.accounts(id)` with cascading deletion. The superseded public tables are now archived in the non-exposed `archive` schema and are retained only for rollback until explicitly deleted.
+The app stores three JSON arrays in the user's `financial_data` row:
 
-```sql
--- expense.accounts
-id uuid primary key,
-user_id uuid not null unique references auth.users(id) on delete cascade,
-currency text not null default 'MYR'
+```javascript
+// incomes: array of income records
+incomes = [
+  {
+    type: 'income',
+    date: 'YYYY-MM-DD',
+    source: string,
+    amount: number
+  },
+  ...
+];
 
--- expense.incomes
-id uuid primary key,
-account_id uuid not null references expense.accounts(id) on delete cascade,
-type text not null default 'income',
-record_date date not null,
-source text not null,
-amount numeric(12, 2) not null check (amount > 0)
+// expenses: array of expense records
+expenses = [
+  {
+    type: 'expense',
+    date: 'YYYY-MM-DD',
+    category: string,
+    desc: string,        // optional description
+    amount: number
+  },
+  ...
+];
 
--- expense.expenses
-id uuid primary key,
-account_id uuid not null references expense.accounts(id) on delete cascade,
-type text not null default 'expense',
-record_date date not null,
-category text not null,
-description text not null default '',
-amount numeric(12, 2) not null check (amount > 0)
-
--- expense.recurring
-id uuid primary key,
-account_id uuid not null references expense.accounts(id) on delete cascade,
-type text not null check (type in ('Loan', 'Utilities', 'Others')),
-name text not null,
-amount numeric(12, 2) not null check (amount > 0)
+// recurring: array of recurring items
+recurring = [
+  {
+    id: 'r_<timestamp>_<random>',
+    type: 'Loan' | 'Utilities' | 'Others',
+    name: string,
+    amount: number
+  },
+  ...
+];
 ```
-
-`legacy_key` columns on the new tables retain the source position of backfilled records and prevent duplicate migration. `created_at` and `updated_at` are managed by PostgreSQL. The browser uses the exposed `expense` schema and never writes a caller-supplied owner ID to record rows.
 
 CSV exports produce rows: `Type, Date, Category/Source, Description, Amount`.
 
 ### Supabase authentication and data
 
-The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. The migration `supabase/migrations/20260911080221_add_expense_accounts_layer.sql` creates the account hierarchy, and `supabase/migrations/20260911082916_archive_legacy_public_expense_tables.sql` moves the old public expense tables into a non-exposed archive schema without deleting their data.
+The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. Apply the SQL migration in `supabase/migrations/20260911010000_rename_expense_tracker_data_to_financial_data.sql` before using record storage. It creates the `public.financial_data` table and Row Level Security policies that restrict every row operation to `auth.uid() = user_id`.
 
-New records are written directly to their dedicated account-scoped relational table, and edits/deletes target one database row by its UUID plus the current account ID. Calculator inputs remain local to the current page.
+Existing records from the previous local-storage version are migrated automatically the first time a signed-in user loads the app, if that user does not already have a Supabase record row. After a successful migration, the old local copies are removed. New records are written to Supabase immediately; calculator inputs remain local to the current page.
 ## Runtime / Compatibility notes
 
 - The app is a static HTML file and works in modern Chromium/Firefox/Safari browsers.
