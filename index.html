@@ -392,10 +392,14 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-let incomes = [];
-let expenses = [];
+let categories = [];
+let ledgerRows = [];   // counted ledger rows (view: counted_transactions)
+let incomes = [];      // derived: direction in, excluding transfers
+let expenses = [];     // derived: direction out, excluding transfers
+let transfers = [];    // derived: type transfer (shown, never counted as savings)
 let recurring = [];
 let editingRecurringId = null;
+let editingRecord = null;
 let chart = null;
 let activeFilter = 'all-time';
 
@@ -441,7 +445,20 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLI
 });
 
 let currentUser = null;
-const RECORDS_TABLE = 'expense_tracker_data';
+let currentAccountId = null;
+const EXPENSE_SCHEMA = 'expense';
+const expenseDb = supabaseClient.schema(EXPENSE_SCHEMA);
+const ACCOUNT_TABLE = 'accounts';
+const TRANSACTION_TABLE = 'transactions';
+// Reads go through the "counted" view so the reporting rule lives in one place:
+// counted = posted + reversed (a reversed row and its compensating row are both
+// counted, so the pair nets to zero). pending and voided stay out.
+const COUNTED_VIEW = 'counted_transactions';
+const CATEGORY_TABLE = 'categories';
+const RECURRING_TABLE = 'recurring';
+// Money is fetched as text and summed in integer cents so a balance never passes
+// through a float. PostgREST returns numeric as a JSON number by default.
+const LEDGER_COLUMNS = 'id, type, direction, status, source_type, reference_no, record_date, description, category_id, legacy_category, reversal_of, amount::text, signed_amount::text';
 const authArea = document.getElementById('authArea');
 const authDialog = document.getElementById('authDialog');
 const authForm = document.getElementById('authForm');
@@ -513,6 +530,85 @@ authForm.addEventListener('submit', async (event) => {
   authDialog.close();
 });
 
+function ensureSignedIn(){
+  if(currentUser) return true;
+  setAuthMessage('Sign in to save and manage your records.');
+  authDialog.showModal();
+  authEmail.focus();
+  return false;
+}
+
+// Ledger values arrive as decimal strings. Parse them to integer cents so every
+// total is exact; never run a balance through a float.
+function toCents(value){
+  if(value === null || value === undefined || value === '') return 0;
+  const text = String(value).trim();
+  const match = /^(-?)(\d+)(?:\.(\d{1,}))?$/.exec(text);
+  if(!match) return Math.round(Number(text) * 100);
+  const sign = match[1] === '-' ? -1 : 1;
+  const fraction = (match[3] || '').padEnd(3, '0').slice(0, 2);
+  return sign * (Number(match[2]) * 100 + Number(fraction));
+}
+
+function fromCents(cents){
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(cents);
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
+}
+
+function moneyFromCents(cents){
+  return 'RM ' + fromCents(cents).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function ledgerFromRow(row, categoryNames){
+  return {
+    id: row.id,
+    type: row.type,                       // expense | income | transfer | refund | adjustment
+    direction: row.direction,             // in | out
+    status: row.status,
+    sourceType: row.source_type,
+    reference: row.reference_no,
+    date: row.record_date,
+    cents: Math.abs(toCents(row.amount)),
+    signedCents: toCents(row.signed_amount),
+    categoryId: row.category_id,
+    category: (row.category_id && categoryNames.get(row.category_id)) || row.legacy_category || 'Uncategorised',
+    desc: row.description || '',
+    reversalOf: row.reversal_of,
+    // Hand-typed, still-posted rows are the only ones the UI may rewrite.
+    editable: row.source_type === 'manual' && row.status === 'posted',
+  };
+}
+
+function recurringFromRow(row){
+  return {
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    cents: Math.abs(toCents(row.amount)),
+    amount: Number(fromCents(Math.abs(toCents(row.amount)))),
+    categoryId: row.category_id,
+    frequency: row.frequency || 'monthly',
+  };
+}
+
+async function ensureAccount(){
+  if(!currentUser) {
+    currentAccountId = null;
+    return;
+  }
+  const { data, error } = await expenseDb
+    .from(ACCOUNT_TABLE)
+    .upsert({ user_id: currentUser.id }, { onConflict: 'user_id' })
+    .select('id')
+    .single();
+  if(error) throw error;
+  currentAccountId = data.id;
+}
+
+// Carried over from main: records written by the pre-Supabase version of this
+// app lived in localStorage. Those are preserved and imported once into the
+// ledger rather than being dropped during the cutover.
 function storageKey(name){
   return `ledger:${currentUser ? currentUser.id : 'public'}:${name}`;
 }
@@ -530,74 +626,110 @@ function clearLegacyStorage(){
   ['incomes', 'expenses', 'recurring'].forEach(name => localStorage.removeItem(storageKey(name)));
 }
 
-function recordsFromRow(row){
-  return {
-    incomes: Array.isArray(row?.incomes) ? row.incomes : [],
-    expenses: Array.isArray(row?.expenses) ? row.expenses : [],
-    recurring: Array.isArray(row?.recurring) ? row.recurring : [],
-  };
-}
+async function importLegacyLocalRecords(){
+  const legacyIncomes = readLegacyStorage('incomes');
+  const legacyExpenses = readLegacyStorage('expenses');
+  const legacyRecurring = readLegacyStorage('recurring');
+  if(!legacyIncomes.length && !legacyExpenses.length && !legacyRecurring.length) return 0;
 
-async function writeRecords(){
-  if(!currentUser) throw new Error('Please sign in before saving records.');
-  const { error } = await supabaseClient.from(RECORDS_TABLE).upsert({
-    user_id: currentUser.id,
-    incomes,
-    expenses,
-    recurring,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'user_id' });
-  if(error) throw error;
-  setDataMessage('Saved to your account.');
-}
+  let imported = 0;
+  for(const item of legacyIncomes){
+    const cents = toCents(item?.amount);
+    if(cents <= 0 || !item?.date) continue;
+    await insertRecord(TRANSACTION_TABLE, {
+      account_id: currentAccountId,
+      type: 'income',
+      direction: 'in',
+      record_date: item.date,
+      description: (item.source || 'Imported income'),
+      amount: fromCents(cents),
+      source_type: 'import',
+    });
+    imported++;
+  }
+  for(const item of legacyExpenses){
+    const cents = toCents(item?.amount);
+    if(cents <= 0 || !item?.date) continue;
+    await insertRecord(TRANSACTION_TABLE, {
+      account_id: currentAccountId,
+      type: 'expense',
+      direction: 'out',
+      record_date: item.date,
+      description: item.desc || '',
+      amount: fromCents(cents),
+      source_type: 'import',
+      category_id: await ensureCategory(item.category || 'Uncategorised'),
+    });
+    imported++;
+  }
+  for(const item of legacyRecurring){
+    const cents = toCents(item?.amount);
+    if(cents <= 0 || !item?.name) continue;
+    await insertRecord(RECURRING_TABLE, rowForRecurring({
+      type: item.type || 'Others',
+      name: item.name,
+      amount: fromCents(cents),
+      categoryId: await ensureCategory(categoryForRecurringType(item.type || 'Others')),
+    }));
+    imported++;
+  }
 
-function ensureSignedIn(){
-  if(currentUser) return true;
-  setAuthMessage('Sign in to save and manage your records.');
-  authDialog.showModal();
-  authEmail.focus();
-  return false;
+  if(imported > 0){
+    clearLegacyStorage();
+    setDataMessage(`Imported ${imported} record(s) from this browser into your ledger.`);
+  }
+  return imported;
 }
 
 async function loadAll(){
   if(!currentUser){
+    currentAccountId = null;
+    categories = [];
+    ledgerRows = [];
     incomes = [];
     expenses = [];
+    transfers = [];
     recurring = [];
     setDataMessage('Sign in to load your saved records.');
   } else {
-    const { data, error } = await supabaseClient
-      .from(RECORDS_TABLE)
-      .select('incomes, expenses, recurring')
-      .eq('user_id', currentUser.id)
-      .maybeSingle();
+    try {
+      await ensureAccount();
+      const [categoryResult, ledgerResult, recurringResult] = await Promise.all([
+        expenseDb.from(CATEGORY_TABLE).select('id, name, legacy_category, is_active').order('name', { ascending: true }),
+        expenseDb.from(COUNTED_VIEW).select(LEDGER_COLUMNS).order('record_date', { ascending: false }).limit(1000),
+        expenseDb.from(RECURRING_TABLE).select('id, type, name, frequency, category_id, is_active, amount::text').order('created_at', { ascending: false }),
+      ]);
+      const error = categoryResult.error || ledgerResult.error || recurringResult.error;
+      if(error) throw error;
+      categories = categoryResult.data || [];
+      const categoryNames = new Map(categories.map(category => [category.id, category.name]));
+      ledgerRows = (ledgerResult.data || []).map(row => ledgerFromRow(row, categoryNames));
+      recurring = (recurringResult.data || []).map(recurringFromRow);
+      // Transfers move money between accounts, so they are shown but never
+      // counted as income or spending in the savings tiles.
+      incomes = ledgerRows.filter(row => row.direction === 'in' && row.type !== 'transfer');
+      expenses = ledgerRows.filter(row => row.direction === 'out' && row.type !== 'transfer');
+      transfers = ledgerRows.filter(row => row.type === 'transfer');
+      setDataMessage('Your ledger is synced to Supabase.');
 
-    if(error){
+      // If this browser still holds records from the old localStorage version and
+      // the ledger is empty, import them once instead of stranding them.
+      if(ledgerRows.length === 0 && recurring.length === 0){
+        const imported = await importLegacyLocalRecords();
+        if(imported > 0){
+          await loadAll();
+          return;
+        }
+      }
+    } catch(error) {
+      currentAccountId = null;
+      categories = [];
+      ledgerRows = [];
       incomes = [];
       expenses = [];
+      transfers = [];
       recurring = [];
-      setDataMessage(`Could not load your records: ${error.message}`, true);
-    } else if(data){
-      ({ incomes, expenses, recurring } = recordsFromRow(data));
-      setDataMessage('Your records are synced to Supabase.');
-    } else {
-      const legacy = {
-        incomes: readLegacyStorage('incomes'),
-        expenses: readLegacyStorage('expenses'),
-        recurring: readLegacyStorage('recurring'),
-      };
-      ({ incomes, expenses, recurring } = legacy);
-      if(incomes.length || expenses.length || recurring.length){
-        try {
-          await writeRecords();
-          clearLegacyStorage();
-          setDataMessage('Your existing records were moved to Supabase.');
-        } catch(migrationError) {
-          setDataMessage(`Could not migrate existing records: ${migrationError.message}`, true);
-        }
-      } else {
-        setDataMessage('Your records are synced to Supabase.');
-      }
+      setDataMessage(`Could not load your records: ${error.message || 'Unknown database error'}`, true);
     }
   }
   renderActivityFeed();
@@ -607,13 +739,86 @@ async function loadAll(){
   setupFilterListeners();
 }
 
-async function saveIncomes(){ await writeRecords(); }
-async function saveExpenses(){ await writeRecords(); }
-async function saveRecurringList(){ await writeRecords(); }
+// Finds or creates the account-scoped category for a display name. The database
+// enforces case-normalized uniqueness, so a lost race falls back to a re-read.
+async function ensureCategory(name){
+  const cleaned = (name || '').trim();
+  if(!cleaned) return null;
+  const existing = categories.find(category => (category.name || '').toLowerCase() === cleaned.toLowerCase());
+  if(existing) return existing.id;
 
-async function persistOrReload(saveFunction){
+  const { data, error } = await expenseDb
+    .from(CATEGORY_TABLE)
+    .insert({ account_id: currentAccountId, name: cleaned, legacy_category: cleaned })
+    .select('id, name')
+    .single();
+  if(error){
+    const { data: refreshed } = await expenseDb.from(CATEGORY_TABLE).select('id, name, legacy_category, is_active');
+    if(refreshed) categories = refreshed;
+    const match = categories.find(category => (category.name || '').toLowerCase() === cleaned.toLowerCase());
+    if(match) return match.id;
+    throw error;
+  }
+  categories.push({ id: data.id, name: data.name });
+  return data.id;
+}
+
+function rowForIncome(record){
+  return {
+    account_id: currentAccountId,
+    type: 'income',
+    direction: 'in',
+    record_date: record.date,
+    description: record.source,
+    amount: record.amount,
+    source_type: 'manual',
+  };
+}
+
+function rowForExpense(record, categoryId){
+  const row = {
+    account_id: currentAccountId,
+    type: 'expense',
+    direction: 'out',
+    record_date: record.date,
+    description: record.desc || '',
+    amount: record.amount,
+    source_type: 'manual',
+  };
+  if(categoryId) row.category_id = categoryId;
+  return row;
+}
+
+function rowForRecurring(record){
+  return {
+    account_id: currentAccountId,
+    type: record.type,
+    name: record.name,
+    amount: record.amount,
+    category_id: record.categoryId || null,
+    frequency: record.frequency || 'monthly',
+  };
+}
+
+async function insertRecord(table, row){
+  const { error } = await expenseDb.from(table).insert(row);
+  if(error) throw error;
+}
+
+async function updateRecordRow(table, id, row){
+  const { error } = await expenseDb.from(table).update(row).eq('id', id).eq('account_id', currentAccountId);
+  if(error) throw error;
+}
+
+async function deleteRecordRow(table, id){
+  const { error } = await expenseDb.from(table).delete().eq('id', id).eq('account_id', currentAccountId);
+  if(error) throw error;
+}
+
+async function persistOrReload(operation){
   try {
-    await saveFunction();
+    await operation();
+    await loadAll();
     return true;
   } catch(error) {
     const message = error?.message || 'Unknown database error';
@@ -625,6 +830,7 @@ async function persistOrReload(saveFunction){
 }
 
 function showPage(id){
+  if(id !== 'addPage') editingRecord = null;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 
@@ -700,11 +906,19 @@ async function addIncome(){
   let source = incomeSourceEl.value;
   if(source === 'Others') source = (incomeSourceOther.value || 'Others').trim();
   if(!source){ alert('Please select or enter an income source.'); return; }
-  const amount = parseFloat(document.getElementById('incomeAmount').value);
-  if(isNaN(amount) || amount <= 0){ alert('Enter a valid income amount.'); return; }
+  const rawAmount = (document.getElementById('incomeAmount').value || '').trim();
+  if(!/^\d+(\.\d{1,2})?$/.test(rawAmount) || toCents(rawAmount) <= 0){
+    alert('Enter a valid income amount with at most two decimal places.');
+    return;
+  }
+  const amount = fromCents(toCents(rawAmount));
 
-  incomes.push({ type:'income', date, source, amount });
-  if(!await persistOrReload(saveIncomes)) return;
+  const record = { type:'income', date, source, amount };
+  const saved = await persistOrReload(() => editingRecord?.type === 'income'
+    ? updateRecordRow(TRANSACTION_TABLE, editingRecord.id, rowForIncome(record))
+    : insertRecord(TRANSACTION_TABLE, rowForIncome(record)));
+  if(!saved) return;
+  editingRecord = null;
   clearIncomeForm();
   showPage('recordsPage');
 }
@@ -715,6 +929,7 @@ function clearIncomeForm(){
   incomeSourceOther.value = '';
   incomeSourceOtherWrap.style.display = 'none';
   document.getElementById('incomeAmount').value = '';
+  if(editingRecord?.type === 'income') editingRecord = null;
 }
 
 async function addExpense(){
@@ -724,11 +939,22 @@ async function addExpense(){
   if(category === 'Others') category = (expenseCategoryOther.value || 'Others').trim();
   if(!category){ alert('Please select or enter an expense category.'); return; }
   const desc = document.getElementById('expenseDesc').value || '';
-  const amount = parseFloat(document.getElementById('expenseAmount').value);
-  if(isNaN(amount) || amount <= 0){ alert('Enter a valid expense amount.'); return; }
+  const rawAmount = (document.getElementById('expenseAmount').value || '').trim();
+  if(!/^\d+(\.\d{1,2})?$/.test(rawAmount) || toCents(rawAmount) <= 0){
+    alert('Enter a valid expense amount with at most two decimal places.');
+    return;
+  }
+  const amount = fromCents(toCents(rawAmount));
 
-  expenses.push({ type:'expense', date, category, desc, amount });
-  if(!await persistOrReload(saveExpenses)) return;
+  const record = { type:'expense', date, category, desc, amount };
+  const saved = await persistOrReload(async () => {
+    const categoryId = await ensureCategory(category);
+    const row = rowForExpense(record, categoryId);
+    if(editingRecord?.type === 'expense') await updateRecordRow(TRANSACTION_TABLE, editingRecord.id, row);
+    else await insertRecord(TRANSACTION_TABLE, row);
+  });
+  if(!saved) return;
+  editingRecord = null;
   clearExpenseForm();
   showPage('recordsPage');
 }
@@ -740,40 +966,66 @@ function clearExpenseForm(){
   expenseCategoryOtherWrap.style.display = 'none';
   document.getElementById('expenseDesc').value = '';
   document.getElementById('expenseAmount').value = '';
+  if(editingRecord?.type === 'expense') editingRecord = null;
 }
 
-async function deleteRecord(type, index){
+async function deleteRecord(id){
   if(!ensureSignedIn()) return;
-  if(!confirm('Delete this record?')) return;
-  if(type === 'income'){ incomes.splice(index,1); if(!await persistOrReload(saveIncomes)) return; }
-  else { expenses.splice(index,1); if(!await persistOrReload(saveExpenses)) return; }
-  renderActivityFeed();
-  renderDashboard();
-  renderChart();
-}
-
-async function editRecord(type, index){
-  if(!ensureSignedIn()) return;
-  let item = (type === 'income') ? incomes[index] : expenses[index];
+  const item = ledgerRows.find(row => row.id === id);
   if(!item) return;
+  if(!item.editable){
+    alert(`This entry came from ${item.sourceType} and is kept as financial history. Use Reverse to correct it instead.`);
+    return;
+  }
+  if(!confirm('Delete this record? This cannot be undone.')) return;
+  await persistOrReload(() => deleteRecordRow(TRANSACTION_TABLE, item.id));
+}
 
+// Posted history is never rewritten. The database marks the original 'reversed'
+// and posts a compensating entry; both stay counted so the pair nets to zero.
+async function reverseLedgerRow(id){
+  if(!ensureSignedIn()) return;
+  const item = ledgerRows.find(row => row.id === id);
+  if(!item) return;
+  if(item.status !== 'posted'){
+    alert('Only posted entries can be reversed.');
+    return;
+  }
+  if(!confirm(`Reverse ${item.reference}?\n\nThe original entry stays in the ledger and a compensating entry is posted, so your balance returns to what it was before it.`)) return;
+  await persistOrReload(async () => {
+    const { error } = await expenseDb.rpc('reverse_transaction', {
+      p_transaction_id: id,
+      p_reason: 'Reversed from the Ledger UI',
+    });
+    if(error) throw error;
+  });
+}
+
+async function editRecord(id){
+  if(!ensureSignedIn()) return;
+  const item = ledgerRows.find(row => row.id === id);
+  if(!item) return;
+  if(!item.editable){
+    alert(`This entry came from ${item.sourceType} and is kept as financial history. Use Reverse to correct it instead.`);
+    return;
+  }
+
+  editingRecord = { type: item.type, id: item.id };
   showPage('addPage');
 
-  if(type === 'income'){
+  if(item.type === 'income'){
     document.getElementById('incomeDate').value = item.date || '';
     const knownSources = ['Salary','Bonus','Overtime','Investment','Dividend','Rental','Freelance','Cashback','Gift'];
-    if(knownSources.includes(item.source)){
-      incomeSourceEl.value = item.source;
+    if(knownSources.includes(item.desc)){
+      incomeSourceEl.value = item.desc;
       incomeSourceOtherWrap.style.display = 'none';
       incomeSourceOther.value = '';
     } else {
       incomeSourceEl.value = 'Others';
       incomeSourceOtherWrap.style.display = 'block';
-      incomeSourceOther.value = item.source;
+      incomeSourceOther.value = item.desc;
     }
-    document.getElementById('incomeAmount').value = item.amount;
-    incomes.splice(index,1);
-    if(!await persistOrReload(saveIncomes)) return;
+    document.getElementById('incomeAmount').value = fromCents(item.cents);
   } else {
     document.getElementById('expenseDate').value = item.date || '';
     const knownCats = ['Food','Groceries','Food Delivery','Transport','Ride-hailing','Fuel','Toll','Parking','Utilities','Rent','Mortgage','Insurance','Entertainment','Shopping','Health','Education','Travel','Home','Pets','Financial','Gifts'];
@@ -787,9 +1039,7 @@ async function editRecord(type, index){
       expenseCategoryOther.value = item.category;
     }
     document.getElementById('expenseDesc').value = item.desc || '';
-    document.getElementById('expenseAmount').value = item.amount;
-    expenses.splice(index,1);
-    if(!await persistOrReload(saveExpenses)) return;
+    document.getElementById('expenseAmount').value = fromCents(item.cents);
   }
 
   renderActivityFeed();
@@ -817,29 +1067,24 @@ async function saveRecurring(){
   if(!ensureSignedIn()) return;
   const type = document.getElementById('recurringType').value;
   const name = document.getElementById('recurringName').value.trim();
-  const amount = parseFloat(document.getElementById('recurringAmount').value);
+  const rawAmount = (document.getElementById('recurringAmount').value || '').trim();
 
   if(!name){ alert('Please enter a name for this recurring transaction.'); return; }
-  if(isNaN(amount) || amount <= 0){ alert('Enter a valid amount.'); return; }
-
-  if(editingRecurringId){
-    const item = recurring.find(r => r.id === editingRecurringId);
-    if(item){
-      item.type = type;
-      item.name = name;
-      item.amount = amount;
-    }
-    editingRecurringId = null;
-  } else {
-    recurring.push({
-      id: 'r_' + Date.now() + '_' + Math.floor(Math.random()*1000),
-      type, name, amount
-    });
+  if(!/^\d+(\.\d{1,2})?$/.test(rawAmount) || toCents(rawAmount) <= 0){
+    alert('Enter a valid amount with at most two decimal places.');
+    return;
   }
+  const amount = fromCents(toCents(rawAmount));
 
-  if(!await persistOrReload(saveRecurringList)) return;
+  const record = { type, name, amount, frequency: 'monthly' };
+  const saved = await persistOrReload(async () => {
+    // A rule points at a real category; the ledger row it generates inherits it.
+    record.categoryId = await ensureCategory(categoryForRecurringType(type));
+    if(editingRecurringId) await updateRecordRow(RECURRING_TABLE, editingRecurringId, rowForRecurring(record));
+    else await insertRecord(RECURRING_TABLE, rowForRecurring(record));
+  });
+  if(!saved) return;
   clearRecurringForm();
-  renderRecurringList();
 }
 
 function clearRecurringForm(){
@@ -866,9 +1111,7 @@ function editRecurring(id){
 async function deleteRecurring(id){
   if(!ensureSignedIn()) return;
   if(!confirm('Remove this recurring transaction? This cannot be undone.')) return;
-  recurring = recurring.filter(r => r.id !== id);
-  if(!await persistOrReload(saveRecurringList)) return;
-  renderRecurringList();
+  if(!await persistOrReload(() => deleteRecordRow(RECURRING_TABLE, id))) return;
 }
 
 async function logRecurringPayment(id){
@@ -876,30 +1119,30 @@ async function logRecurringPayment(id){
   const item = recurring.find(r => r.id === id);
   if(!item) return;
 
-  const category = categoryForRecurringType(item.type);
-  expenses.push({
+  const categoryId = item.categoryId || await ensureCategory(categoryForRecurringType(item.type));
+  const saved = await persistOrReload(() => insertRecord(TRANSACTION_TABLE, {
+    account_id: currentAccountId,
     type: 'expense',
-    date: todayStr(),
-    category,
-    desc: item.name + ' (recurring)',
-    amount: item.amount
-  });
-  if(!await persistOrReload(saveExpenses)) return;
+    direction: 'out',
+    record_date: todayStr(),
+    description: item.name + ' (recurring)',
+    amount: fromCents(item.cents),
+    source_type: 'recurring',
+    recurring_id: item.id,
+    category_id: categoryId,
+  }));
+  if(!saved) return;
 
-  renderActivityFeed();
-  renderDashboard();
-  renderChart();
-
-  alert(`Logged RM ${item.amount.toFixed(2)} for "${item.name}" today.`);
+  alert(`Logged RM ${fromCents(item.cents)} for "${item.name}" today.`);
 }
 
 function renderRecurringList(){
   const container = document.getElementById('recurringList');
   const totalEl = document.getElementById('recurring-total');
 
-  const total = recurring.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const totalCents = recurring.reduce((s, r) => s + r.cents, 0);
   if(totalEl) {
-    totalEl.textContent = 'Total: RM ' + total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    totalEl.textContent = 'Total: ' + moneyFromCents(totalCents);
   }
 
   if(recurring.length === 0){
@@ -917,7 +1160,7 @@ function renderRecurringList(){
           <span class="badge ${badgeClassForType(item.type)}">${escapeHtml(item.type)}</span>
           <div style="margin-top:8px"><strong>${escapeHtml(item.name)}</strong></div>
         </div>
-        <div class="amt neg">RM ${Number(item.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+        <div class="amt neg">${moneyFromCents(item.cents)}</div>
       </div>
       <div class="controls">
         <button class="edit-btn pay-btn" data-action="pay">Log payment</button>
@@ -960,46 +1203,52 @@ function setupFilterListeners(){
   });
 }
 
-function getFilteredExpenses(){
+// The date filter now applies to the whole ledger, so the activity feed, the
+// chart and the totals all describe the same window.
+function getFilteredLedger(){
   const now = new Date();
-  let filtered = expenses;
+  let filtered = ledgerRows;
 
   if(activeFilter === 'this-month'){
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
-    filtered = expenses.filter(e => {
-      const eDate = new Date(e.date);
-      return eDate.getMonth() === currentMonth && eDate.getFullYear() === currentYear;
+    filtered = ledgerRows.filter(row => {
+      const rowDate = new Date(row.date);
+      return rowDate.getMonth() === currentMonth && rowDate.getFullYear() === currentYear;
     });
   } else if(activeFilter === 'last-7'){
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    filtered = expenses.filter(e => new Date(e.date) >= sevenDaysAgo);
+    filtered = ledgerRows.filter(row => new Date(row.date) >= sevenDaysAgo);
   } else if(activeFilter === 'last-30'){
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    filtered = expenses.filter(e => new Date(e.date) >= thirtyDaysAgo);
+    filtered = ledgerRows.filter(row => new Date(row.date) >= thirtyDaysAgo);
   } else if(activeFilter === 'custom'){
     const startDate = document.getElementById('customStartDate').value;
     const endDate = document.getElementById('customEndDate').value;
-    
+
     if(startDate){
       const start = new Date(startDate);
-      filtered = filtered.filter(e => new Date(e.date) >= start);
+      filtered = filtered.filter(row => new Date(row.date) >= start);
     }
     if(endDate){
       const end = new Date(endDate);
       end.setDate(end.getDate() + 1);
-      filtered = filtered.filter(e => new Date(e.date) < end);
+      filtered = filtered.filter(row => new Date(row.date) < end);
     }
   }
 
   return filtered;
 }
 
+function getFilteredExpenses(){
+  return getFilteredLedger().filter(row => row.type === 'expense');
+}
+
+// Aggregates in integer cents so the doughnut percentages stay exact.
 function groupByCategory(){
-  const filtered = getFilteredExpenses();
-  const grouped = {};
-  filtered.forEach(e => {
-    grouped[e.category] = (grouped[e.category] || 0) + e.amount;
+  const grouped = new Map();
+  getFilteredExpenses().forEach(row => {
+    grouped.set(row.category, (grouped.get(row.category) || 0) + row.cents);
   });
   return grouped;
 }
@@ -1007,19 +1256,20 @@ function groupByCategory(){
 function renderChart(){
   const chartSection = document.getElementById('chartSection');
   const grouped = groupByCategory();
-  const categories = Object.keys(grouped);
+  const chartCategories = [...grouped.keys()];
 
-  if(categories.length === 0){
+  if(chartCategories.length === 0){
     chartSection.style.display = 'none';
     return;
   }
 
   chartSection.style.display = 'block';
-  const amounts = Object.values(grouped);
-  const colors = categories.map((cat, i) => colorPalette[i % colorPalette.length]);
+  const amounts = chartCategories.map(category => grouped.get(category));
+  const colors = chartCategories.map((category, i) => colorPalette[i % colorPalette.length]);
+  const totalCents = amounts.reduce((a, b) => a + b, 0);
 
   const ctx = document.getElementById('expenseChart').getContext('2d');
-  
+
   if(chart){
     chart.destroy();
   }
@@ -1027,9 +1277,10 @@ function renderChart(){
   chart = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: categories,
+      labels: chartCategories,
       datasets: [{
-        data: amounts,
+        // Chart.js needs numbers for rendering only; balances stay in cents.
+        data: amounts.map(cents => Number(fromCents(cents))),
         backgroundColor: colors,
         borderColor: '#131417',
         borderWidth: 2
@@ -1044,34 +1295,42 @@ function renderChart(){
     }
   });
 
-  const legendHtml = categories
-    .map((cat, i) => {
-      const amount = grouped[cat];
-      const percentage = ((amount / amounts.reduce((a, b) => a + b, 0)) * 100).toFixed(1);
+  const legendHtml = chartCategories
+    .map((category, i) => {
+      const amount = amounts[i];
+      const percentage = totalCents > 0 ? ((amount / totalCents) * 100).toFixed(1) : '0.0';
       return `
         <div class="legend-item">
           <div class="legend-color" style="background-color: ${colors[i]}"></div>
-          <span class="legend-label">${cat}</span>
-          <span class="legend-value">RM ${Number(amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} (${percentage}%)</span>
+          <span class="legend-label">${escapeHtml(category)}</span>
+          <span class="legend-value">${moneyFromCents(amount)} (${percentage}%)</span>
         </div>
       `;
     })
     .join('');
-  
+
   document.getElementById('chartLegend').innerHTML = legendHtml;
+}
+
+function ledgerRowTitle(row){
+  if(row.type === 'transfer') return row.direction === 'in' ? 'Transfer in' : 'Transfer out';
+  if(row.type === 'income') return row.desc || 'Income';
+  return row.category;
+}
+
+function ledgerRowMeta(row){
+  const parts = [row.date || ''];
+  if(row.reference) parts.push(row.reference);
+  if(row.status !== 'posted') parts.push(row.status);
+  if(row.sourceType !== 'manual') parts.push(row.sourceType);
+  return parts.filter(Boolean).join(' · ');
 }
 
 function renderActivityFeed(){
   const feed = document.getElementById('activityFeed');
   feed.innerHTML = '';
 
-  const incs = incomes.map((it, idx) => ({...it, index: idx}));
-  const exps = getFilteredExpenses().map((it, idx) => {
-    const origIdx = expenses.indexOf(it);
-    return {...it, index: origIdx};
-  });
-
-  const combined = [...incs, ...exps].sort((a,b) => {
+  const combined = getFilteredLedger().slice().sort((a, b) => {
     const da = new Date(a.date || '1970-01-01').getTime();
     const db = new Date(b.date || '1970-01-01').getTime();
     return db - da;
@@ -1083,45 +1342,61 @@ function renderActivityFeed(){
   }
 
   combined.forEach(item => {
-    const isIncome = item.type === 'income';
+    const isInflow = item.direction === 'in';
     const wrapper = document.createElement('div');
-    wrapper.className = 'activity-item ' + (isIncome ? 'income-item' : 'expense-item');
+    wrapper.className = 'activity-item ' + (isInflow ? 'income-item' : 'expense-item');
 
     const top = document.createElement('div');
     top.className = 'row-between';
     const title = document.createElement('div');
-    title.innerHTML = `<strong>${isIncome ? escapeHtml(item.source) : escapeHtml(item.category)}</strong>`;
+    title.innerHTML = `<strong>${escapeHtml(ledgerRowTitle(item))}</strong>`;
     const amt = document.createElement('div');
-    amt.className = 'amt ' + (isIncome ? 'pos' : 'neg');
-    amt.textContent = `${isIncome ? '+' : '-'} RM ${Number(item.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    amt.className = 'amt ' + (isInflow ? 'pos' : 'neg');
+    amt.textContent = `${isInflow ? '+' : '-'} ${moneyFromCents(item.cents)}`;
     top.appendChild(title);
     top.appendChild(amt);
 
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.textContent = item.date || '';
+    meta.textContent = ledgerRowMeta(item);
 
+    const showsDesc = item.desc && item.desc !== ledgerRowTitle(item);
     const desc = document.createElement('div');
     desc.className = 'small';
     desc.style.marginTop = '4px';
-    if(!isIncome && item.desc) desc.textContent = item.desc;
+    if(showsDesc) desc.textContent = item.desc;
 
     const controls = document.createElement('div');
     controls.className = 'controls';
-    const editBtn = document.createElement('button');
-    editBtn.className = 'edit-btn';
-    editBtn.textContent = 'Edit';
-    editBtn.onclick = () => editRecord(item.type, item.index);
-    const delBtn = document.createElement('button');
-    delBtn.className = 'delete-btn';
-    delBtn.textContent = 'Delete';
-    delBtn.onclick = () => deleteRecord(item.type, item.index);
-    controls.appendChild(editBtn);
-    controls.appendChild(delBtn);
+
+    // Only hand-typed, posted rows may be rewritten. Everything else is history
+    // and can only be reversed.
+    if(item.editable){
+      const editBtn = document.createElement('button');
+      editBtn.className = 'edit-btn';
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = () => editRecord(item.id);
+      controls.appendChild(editBtn);
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = 'Delete';
+      delBtn.onclick = () => deleteRecord(item.id);
+      controls.appendChild(delBtn);
+    }
+
+    if(item.status === 'posted'){
+      const reverseBtn = document.createElement('button');
+      reverseBtn.className = 'edit-btn';
+      reverseBtn.textContent = 'Reverse';
+      reverseBtn.title = 'Keep this entry in the ledger and post a compensating entry';
+      reverseBtn.onclick = () => reverseLedgerRow(item.id);
+      controls.appendChild(reverseBtn);
+    }
 
     wrapper.appendChild(top);
     wrapper.appendChild(meta);
-    if(!isIncome && item.desc) wrapper.appendChild(desc);
+    if(showsDesc) wrapper.appendChild(desc);
     wrapper.appendChild(controls);
 
     feed.appendChild(wrapper);
@@ -1129,35 +1404,46 @@ function renderActivityFeed(){
 }
 
 function renderDashboard(){
-  const totalIncome = incomes.reduce((s,i)=>s + (parseFloat(i.amount)||0),0);
-  const totalExpenses = expenses.reduce((s,e)=>s + (parseFloat(e.amount)||0),0);
-  const savings = totalIncome - totalExpenses;
+  // Counted rows only, and transfers are excluded: moving money between your own
+  // accounts is not income or spending. Every sum is integer cents.
+  const totalIncomeCents = incomes.reduce((s, row) => s + row.cents, 0);
+  const totalExpenseCents = expenses.reduce((s, row) => s + row.cents, 0);
+  const savingsCents = totalIncomeCents - totalExpenseCents;
 
-  document.getElementById('dashIncome').textContent = 'RM ' + totalIncome.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-  document.getElementById('dashExpenses').textContent = 'RM ' + totalExpenses.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('dashIncome').textContent = moneyFromCents(totalIncomeCents);
+  document.getElementById('dashExpenses').textContent = moneyFromCents(totalExpenseCents);
 
   const savingsEl = document.getElementById('dashSavings');
-  savingsEl.textContent = 'RM ' + savings.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-  savingsEl.className = 'dash-value ' + (savings >= 0 ? 'pos' : 'neg');
+  savingsEl.textContent = moneyFromCents(savingsCents);
+  savingsEl.className = 'dash-value ' + (savingsCents >= 0 ? 'pos' : 'neg');
 }
 
 function exportCSV() {
-  if(incomes.length === 0 && expenses.length === 0){
+  if(ledgerRows.length === 0){
     alert('No records to export yet.');
     return;
   }
-  let rows = [["Type", "Date", "Category/Source", "Description", "Amount"]];
+  const rows = [["Reference", "Type", "Direction", "Status", "Source", "Date", "Category", "Description", "Amount"]];
 
-  incomes.forEach(i => rows.push(["Income", i.date, i.source, "", i.amount]));
-  expenses.forEach(e => rows.push(["Expense", e.date, e.category, e.desc || "", e.amount]));
+  ledgerRows.forEach(row => rows.push([
+    row.reference || '',
+    row.type,
+    row.direction,
+    row.status,
+    row.sourceType,
+    row.date,
+    row.category,
+    row.desc || '',
+    fromCents(row.cents)
+  ]));
 
-  let csvContent = rows.map(r =>
+  const csvContent = rows.map(r =>
     r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
   ).join("\n");
 
-  let blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  let url = URL.createObjectURL(blob);
-  let link = document.createElement("a");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
   link.href = url;
   link.download = "ledger_export.csv";
   link.click();
