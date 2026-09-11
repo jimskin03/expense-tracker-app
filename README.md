@@ -61,7 +61,7 @@ cd expense-tracker-app
 
    - **Option B**: open the file directly in the browser: double-click `index.html` or open it via `file://` URL. (Some browsers restrict certain APIs for file URLs; using a simple HTTP server avoids this.)
 
-3. Apply the SQL migrations in `supabase/migrations/` to the shared Supabase project in filename order. The account-layer migration is `20260911080221_add_expense_accounts_layer.sql`; it preserves the public normalized tables and legacy table as rollback sources.
+3. Apply the SQL migrations in `supabase/migrations/` to the shared Supabase project in filename order. The account-layer migration is `20260911080221_add_expense_accounts_layer.sql`; the archive migration is `20260911082916_archive_legacy_public_expense_tables.sql`. The archive migration preserves the old data in a non-exposed `archive` schema.
 4. Start using it: Sign in from the top bar, add income and expense records from the Add tab, view activity on the Records tab, and manage recurring payments on the Recurring tab.
 
 ## Usage
@@ -128,7 +128,7 @@ If you plan to expand the project, add a dedicated table in the appropriate serv
 
 ## Data model
 
-The account-layer migration creates an account row for each existing Supabase Auth user and copies normalized rows beneath that account. The new tables are `expense.incomes`, `expense.expenses`, and `expense.recurring`; each has an `account_id` foreign key to `expense.accounts(id)` with cascading deletion. The old public normalized tables and `public.expense_tracker_data` remain temporarily as rollback sources until the new deployment completes its verification window.
+The account-layer migration creates an account row for each existing Supabase Auth user and copies normalized rows beneath that account. The new tables are `expense.incomes`, `expense.expenses`, and `expense.recurring`; each has an `account_id` foreign key to `expense.accounts(id)` with cascading deletion. The superseded public tables are now archived in the non-exposed `archive` schema and are retained only for rollback until explicitly deleted.
 
 ```sql
 -- expense.accounts
@@ -167,7 +167,7 @@ CSV exports produce rows: `Type, Date, Category/Source, Description, Amount`.
 
 ### Supabase authentication and data
 
-The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. The migration `supabase/migrations/20260911080221_add_expense_accounts_layer.sql` creates the account hierarchy, copies existing normalized data, exposes account-based RLS, and leaves rollback tables untouched.
+The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. The migration `supabase/migrations/20260911080221_add_expense_accounts_layer.sql` creates the account hierarchy, and `supabase/migrations/20260911082916_archive_legacy_public_expense_tables.sql` moves the old public expense tables into a non-exposed archive schema without deleting their data.
 
 New records are written directly to their dedicated account-scoped relational table, and edits/deletes target one database row by its UUID plus the current account ID. Calculator inputs remain local to the current page.
 ## Runtime / Compatibility notes

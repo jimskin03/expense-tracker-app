@@ -7,7 +7,7 @@ Ledger is a minimal single-file SPA implemented in `index.html`. Authentication 
 - CSS variables and theme — top of `index.html`.
 - HTML markup — Records, Add, Recurring, and Calculator pages toggled with `.page` and `.active`.
 - JavaScript — one inline script near the bottom of `index.html`.
-- Supabase migrations — `supabase/migrations/20260911074622_normalize_expense_tracker_records.sql` and `supabase/migrations/20260911080221_add_expense_accounts_layer.sql`.
+- Supabase migrations — `supabase/migrations/20260911074622_normalize_expense_tracker_records.sql`, `supabase/migrations/20260911080221_add_expense_accounts_layer.sql`, and `supabase/migrations/20260911082916_archive_legacy_public_expense_tables.sql`.
 
 ## 2. JavaScript responsibilities
 
@@ -42,12 +42,13 @@ The browser creates or resolves the current user's account, then writes only `ac
 
 ## 4. Migration and rollback
 
-The account-layer migration copies the normalized rows under `expense.accounts` and leaves the source tables untouched. Before retiring `public.expense_tracker_data` and the old public normalized tables:
+The account-layer migration copies the normalized rows under `expense.accounts` and the archive migration moves the source tables into the non-exposed `archive` schema. Archived data is retained for rollback; it is not part of the application API and the public schema itself remains available for Supabase compatibility.
 
-1. Compare per-user counts and monetary totals between old and new storage.
-2. Verify live add, reload, update, delete, recurring payment, filtering, and CSV flows.
-3. Confirm account isolation with two authenticated accounts.
-4. Obtain explicit approval for a separate destructive cleanup migration.
+Before permanently deleting the archived tables:
+
+1. Confirm the live application has no references to the archive schema.
+2. Keep an export or backup if the rollback window is still required.
+3. Obtain explicit approval for a separate destructive cleanup migration.
 
 ## 5. Adding a future service
 
