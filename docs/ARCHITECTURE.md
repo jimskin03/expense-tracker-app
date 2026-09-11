@@ -7,7 +7,7 @@ Ledger is a minimal single-file SPA implemented in `index.html`. Authentication 
 - CSS variables and theme — top of `index.html`.
 - HTML markup — Records, Add, Recurring, and Calculator pages toggled with `.page` and `.active`.
 - JavaScript — one inline script near the bottom of `index.html`.
-- Supabase migration — `supabase/migrations/20260911074622_normalize_expense_tracker_records.sql`.
+- Supabase migrations — `supabase/migrations/20260911074622_normalize_expense_tracker_records.sql` and `supabase/migrations/20260911080221_add_expense_accounts_layer.sql`.
 
 ## 2. JavaScript responsibilities
 
@@ -22,28 +22,27 @@ Ledger is a minimal single-file SPA implemented in `index.html`. Authentication 
 
 ## 3. Relational storage contract
 
-The normalized schema stores one database row per record:
+The account-scoped schema stores one database row per record beneath the authenticated user's account:
 
-- `public.expense_income_records` — `id`, `user_id`, `type`, `record_date`, `source`, `amount`.
-- `public.expense_expense_records` — `id`, `user_id`, `type`, `record_date`, `category`, `description`, `amount`.
-- `public.expense_recurring_records` — `id`, `user_id`, `type`, `name`, `amount`.
+- `expense.accounts` — `id`, `user_id`, `currency`, timestamps; one account per Auth user today.
+- `expense.incomes` — `id`, `account_id`, `type`, `record_date`, `source`, `amount`.
+- `expense.expenses` — `id`, `account_id`, `type`, `record_date`, `category`, `description`, `amount`.
+- `expense.recurring` — `id`, `account_id`, `type`, `name`, `amount`.
 
 Each table has:
 
 - A database-generated UUID primary key.
-- A foreign key to `auth.users(id)` with `on delete cascade`.
+- A foreign key through `expense.accounts` to `auth.users(id)` with `on delete cascade`.
 - Positive amount and required-field constraints.
-- A composite index beginning with `user_id`.
+- An account-leading index for ownership-filtered queries.
 - Database-managed `created_at` and `updated_at` timestamps.
 - RLS policies for authenticated SELECT/INSERT/UPDATE/DELETE operations.
 
-The browser includes `user_id` on inserts because Supabase requires a row value, but authorization is enforced independently by the RLS `auth.uid() = user_id` policy. Reads, updates, and deletes are also filtered by the current user in the client for defense in depth.
+The browser creates or resolves the current user's account, then writes only `account_id` on records. RLS independently verifies that the account belongs to `auth.uid()`; client-side account filters provide defense in depth.
 
 ## 4. Migration and rollback
 
-The normalization migration backfills the legacy JSON arrays using ordinal `legacy_key` values so duplicate records remain distinct. It is idempotent for backfill rows and does not drop `public.expense_tracker_data`. The old table remains available as a rollback source until the normalized deployment has completed its verification window.
-
-Before retiring the legacy table:
+The account-layer migration copies the normalized rows under `expense.accounts` and leaves the source tables untouched. Before retiring `public.expense_tracker_data` and the old public normalized tables:
 
 1. Compare per-user counts and monetary totals between old and new storage.
 2. Verify live add, reload, update, delete, recurring payment, filtering, and CSV flows.

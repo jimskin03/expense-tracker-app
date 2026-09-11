@@ -61,7 +61,7 @@ cd expense-tracker-app
 
    - **Option B**: open the file directly in the browser: double-click `index.html` or open it via `file://` URL. (Some browsers restrict certain APIs for file URLs; using a simple HTTP server avoids this.)
 
-3. Apply the SQL migrations in `supabase/migrations/` to the shared Supabase project. Apply `20260911000000_create_expense_tracker_data.sql` first, followed by `20260911074622_normalize_expense_tracker_records.sql`.
+3. Apply the SQL migrations in `supabase/migrations/` to the shared Supabase project in filename order. The account-layer migration is `20260911080221_add_expense_accounts_layer.sql`; it preserves the public normalized tables and legacy table as rollback sources.
 4. Start using it: Sign in from the top bar, add income and expense records from the Add tab, view activity on the Records tab, and manage recurring payments on the Recurring tab.
 
 ## Usage
@@ -110,7 +110,7 @@ This is a minimal single-file SPA. The entire app lives in `index.html`. Major r
 
 - **Styling**: CSS variables at the top of the file (`:root`) control theme colors, radii, and layout. Chart-specific styles handle legend display and filter buttons.
 - **State**: five in-memory arrays `incomes`, `expenses`, `recurring`, plus `activeFilter` for current date range.
-- **Persistence**: authenticated records are stored as individual rows in three Supabase tables: `public.expense_income_records`, `public.expense_expense_records`, and `public.expense_recurring_records`. Each row references the authenticated account through `user_id`; Row Level Security limits every operation to that user. Calculator inputs remain in memory and are not account records.
+- **Persistence**: authenticated records are stored as individual rows in the exposed `expense` schema: `expense.incomes`, `expense.expenses`, and `expense.recurring`. Every user has an `expense.accounts` row linked to `auth.users`; record rows reference that account through `account_id`, and Row Level Security limits every operation to the owning user. Calculator inputs remain in memory and are not account records.
 - **Rendering**: 
   - `renderActivityFeed()`: displays activity feed with optional date filtering
   - `renderDashboard()`: updates dashboard totals
@@ -124,47 +124,52 @@ This is a minimal single-file SPA. The entire app lives in `index.html`. Major r
 
 ### Adding New Features
 
-If you plan to expand the project, add a dedicated table with a `user_id uuid not null references auth.users(id) on delete cascade` column, an index on `user_id`, and SELECT/INSERT/UPDATE/DELETE RLS policies using `auth.uid() = user_id`. Do not add unrelated service data to the expense tables or modify `auth.users` directly.
+If you plan to expand the project, add a dedicated table in the appropriate service schema and link it to that service's account boundary. For the expense tracker, records belong to `expense.accounts` through `account_id`; RLS must authorize the account's `user_id = auth.uid()`. Do not add unrelated service data to the expense tables or modify `auth.users` directly.
 
 ## Data model
 
-The tracker stores one row per record in three tables. All tables include a database-generated `id` and a `user_id` foreign key to `auth.users(id)`.
+The account-layer migration creates an account row for each existing Supabase Auth user and copies normalized rows beneath that account. The new tables are `expense.incomes`, `expense.expenses`, and `expense.recurring`; each has an `account_id` foreign key to `expense.accounts(id)` with cascading deletion. The old public normalized tables and `public.expense_tracker_data` remain temporarily as rollback sources until the new deployment completes its verification window.
 
 ```sql
--- public.expense_income_records
+-- expense.accounts
 id uuid primary key,
-user_id uuid not null references auth.users(id) on delete cascade,
+user_id uuid not null unique references auth.users(id) on delete cascade,
+currency text not null default 'MYR'
+
+-- expense.incomes
+id uuid primary key,
+account_id uuid not null references expense.accounts(id) on delete cascade,
 type text not null default 'income',
 record_date date not null,
 source text not null,
 amount numeric(12, 2) not null check (amount > 0)
 
--- public.expense_expense_records
+-- expense.expenses
 id uuid primary key,
-user_id uuid not null references auth.users(id) on delete cascade,
+account_id uuid not null references expense.accounts(id) on delete cascade,
 type text not null default 'expense',
 record_date date not null,
 category text not null,
 description text not null default '',
 amount numeric(12, 2) not null check (amount > 0)
 
--- public.expense_recurring_records
+-- expense.recurring
 id uuid primary key,
-user_id uuid not null references auth.users(id) on delete cascade,
+account_id uuid not null references expense.accounts(id) on delete cascade,
 type text not null check (type in ('Loan', 'Utilities', 'Others')),
 name text not null,
 amount numeric(12, 2) not null check (amount > 0)
 ```
 
-`legacy_key` columns on the new tables retain the source position of backfilled records and prevent duplicate migration. `created_at` and `updated_at` are managed by PostgreSQL. The original `expense_tracker_data` table remains available as a rollback source until the normalized schema has completed its verification window.
+`legacy_key` columns on the new tables retain the source position of backfilled records and prevent duplicate migration. `created_at` and `updated_at` are managed by PostgreSQL. The browser uses the exposed `expense` schema and never writes a caller-supplied owner ID to record rows.
 
 CSV exports produce rows: `Type, Date, Category/Source, Description, Amount`.
 
 ### Supabase authentication and data
 
-The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. The migration `supabase/migrations/20260911074622_normalize_expense_tracker_records.sql` creates the normalized tables, backfills the old JSON records, and applies RLS policies restricting every row operation to `auth.uid() = user_id`.
+The app connects to the shared Cryptgreg Research Supabase project for password authentication and shared sessions. The migration `supabase/migrations/20260911080221_add_expense_accounts_layer.sql` creates the account hierarchy, copies existing normalized data, exposes account-based RLS, and leaves rollback tables untouched.
 
-The legacy `public.expense_tracker_data` table is retained temporarily as a rollback source. New records are written directly to their dedicated relational table, and edits/deletes target one database row by its UUID. Calculator inputs remain local to the current page.
+New records are written directly to their dedicated account-scoped relational table, and edits/deletes target one database row by its UUID plus the current account ID. Calculator inputs remain local to the current page.
 ## Runtime / Compatibility notes
 
 - The app is a static HTML file and works in modern Chromium/Firefox/Safari browsers.

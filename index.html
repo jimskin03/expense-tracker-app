@@ -442,9 +442,13 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLI
 });
 
 let currentUser = null;
-const INCOME_TABLE = 'expense_income_records';
-const EXPENSE_TABLE = 'expense_expense_records';
-const RECURRING_TABLE = 'expense_recurring_records';
+let currentAccountId = null;
+const EXPENSE_SCHEMA = 'expense';
+const expenseDb = supabaseClient.schema(EXPENSE_SCHEMA);
+const ACCOUNT_TABLE = 'accounts';
+const INCOME_TABLE = 'incomes';
+const EXPENSE_TABLE = 'expenses';
+const RECURRING_TABLE = 'recurring';
 const authArea = document.getElementById('authArea');
 const authDialog = document.getElementById('authDialog');
 const authForm = document.getElementById('authForm');
@@ -536,29 +540,47 @@ function recurringFromRow(row){
   return { id: row.id, type: row.type, name: row.name, amount: Number(row.amount) };
 }
 
+async function ensureAccount(){
+  if(!currentUser) {
+    currentAccountId = null;
+    return;
+  }
+  const { data, error } = await expenseDb
+    .from(ACCOUNT_TABLE)
+    .upsert({ user_id: currentUser.id }, { onConflict: 'user_id' })
+    .select('id')
+    .single();
+  if(error) throw error;
+  currentAccountId = data.id;
+}
+
 async function loadAll(){
   if(!currentUser){
+    currentAccountId = null;
     incomes = [];
     expenses = [];
     recurring = [];
     setDataMessage('Sign in to load your saved records.');
   } else {
-    const [incomeResult, expenseResult, recurringResult] = await Promise.all([
-      supabaseClient.from(INCOME_TABLE).select('id, type, record_date, source, amount').order('record_date', { ascending: false }),
-      supabaseClient.from(EXPENSE_TABLE).select('id, type, record_date, category, description, amount').order('record_date', { ascending: false }),
-      supabaseClient.from(RECURRING_TABLE).select('id, type, name, amount').order('created_at', { ascending: false }),
-    ]);
-    const error = incomeResult.error || expenseResult.error || recurringResult.error;
-    if(error){
-      incomes = [];
-      expenses = [];
-      recurring = [];
-      setDataMessage(`Could not load your records: ${error.message}`, true);
-    } else {
+    try {
+      await ensureAccount();
+      const [incomeResult, expenseResult, recurringResult] = await Promise.all([
+        expenseDb.from(INCOME_TABLE).select('id, type, record_date, source, amount').order('record_date', { ascending: false }),
+        expenseDb.from(EXPENSE_TABLE).select('id, type, record_date, category, description, amount').order('record_date', { ascending: false }),
+        expenseDb.from(RECURRING_TABLE).select('id, type, name, amount').order('created_at', { ascending: false }),
+      ]);
+      const error = incomeResult.error || expenseResult.error || recurringResult.error;
+      if(error) throw error;
       incomes = (incomeResult.data || []).map(incomeFromRow);
       expenses = (expenseResult.data || []).map(expenseFromRow);
       recurring = (recurringResult.data || []).map(recurringFromRow);
       setDataMessage('Your records are synced to Supabase.');
+    } catch(error) {
+      currentAccountId = null;
+      incomes = [];
+      expenses = [];
+      recurring = [];
+      setDataMessage(`Could not load your records: ${error.message || 'Unknown database error'}`, true);
     }
   }
   renderActivityFeed();
@@ -569,29 +591,29 @@ async function loadAll(){
 }
 
 function rowForIncome(record){
-  return { user_id: currentUser.id, type: 'income', record_date: record.date, source: record.source, amount: record.amount };
+  return { account_id: currentAccountId, type: 'income', record_date: record.date, source: record.source, amount: record.amount };
 }
 
 function rowForExpense(record){
-  return { user_id: currentUser.id, type: 'expense', record_date: record.date, category: record.category, description: record.desc || '', amount: record.amount };
+  return { account_id: currentAccountId, type: 'expense', record_date: record.date, category: record.category, description: record.desc || '', amount: record.amount };
 }
 
 function rowForRecurring(record){
-  return { user_id: currentUser.id, type: record.type, name: record.name, amount: record.amount };
+  return { account_id: currentAccountId, type: record.type, name: record.name, amount: record.amount };
 }
 
 async function insertRecord(table, row){
-  const { error } = await supabaseClient.from(table).insert(row);
+  const { error } = await expenseDb.from(table).insert(row);
   if(error) throw error;
 }
 
 async function updateRecordRow(table, id, row){
-  const { error } = await supabaseClient.from(table).update(row).eq('id', id).eq('user_id', currentUser.id);
+  const { error } = await expenseDb.from(table).update(row).eq('id', id).eq('account_id', currentAccountId);
   if(error) throw error;
 }
 
 async function deleteRecordRow(table, id){
-  const { error } = await supabaseClient.from(table).delete().eq('id', id).eq('user_id', currentUser.id);
+  const { error } = await expenseDb.from(table).delete().eq('id', id).eq('account_id', currentAccountId);
   if(error) throw error;
 }
 
@@ -857,7 +879,7 @@ async function logRecurringPayment(id){
 
   const category = categoryForRecurringType(item.type);
   const saved = await persistOrReload(() => insertRecord(EXPENSE_TABLE, {
-    user_id: currentUser.id,
+    account_id: currentAccountId,
     type: 'expense',
     record_date: todayStr(),
     category,
